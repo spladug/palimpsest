@@ -265,7 +265,7 @@ function updateHierarchy(world: World, now: number, immediate = false): void {
     } else if (e.usage < downgradeAt[e.cls] && now - e.created > patience) {
       e.pressure = Math.min(-1, e.pressure - 1);
       if (e.pressure <= -patience) {
-        // Planned ways are kept up: they may decline to a track but are not abandoned.
+        // Planned ways are kept up: back lanes may decline to a track, town streets no lower than a lane.
         if (e.planned && level <= 1) e.pressure = 0;
         else if (level === 0) g.removeEdge(e.id);
         else e.cls = EDGE_CLASSES[level - 1];

@@ -289,29 +289,19 @@ function trimTo(pts: Vec2[], length: number): Vec2[] {
   return out;
 }
 
-/**
- * Plant a borough: the lord lays out a market place where the busiest road
- * leaves the village, and burgage plots along the road beyond it. The plots
- * are cut from whatever the land was — mostly open-field strips, whose lines
- * the plot boundaries follow — and the strips under them are given up.
- */
-export function plantBorough(world: World, core: Shape): Borough | null {
+interface BoroughLayout {
+  street: Vec2[];
+  /** The graph edges the street runs along. */
+  edges: number[];
+  plots: CutPlot[];
+  streetName: string;
+}
+
+/** Lay out (without committing) a borough along the way leaving the village by `edge` from `node`. */
+function layOutBorough(world: World, core: Shape, edge: GraphEdge, node: number): BoroughLayout | null {
   const rules = world.plugins.technology.plots;
-  const g = world.graph;
-  // Where does each way leave the village core?
-  let best: { edge: GraphEdge; node: number; score: number } | null = null;
-  for (const e of g.edges.values()) {
-    if (e.cls === 'path') continue;
-    for (const nodeId of [e.a, e.b]) {
-      const inside = pointInShape(g.nodes.get(nodeId)!.pos, core);
-      const otherInside = pointInShape(g.nodes.get(g.other(e, nodeId))!.pos, core);
-      if (!inside || otherInside) continue;
-      const score = e.usage * (1 - world.terrain.wetness.sample(g.nodes.get(g.other(e, nodeId))!.pos));
-      if (!best || score > best.score) best = { edge: e, node: nodeId, score };
-    }
-  }
-  if (!best) return null;
-  const { pts: raw, edges } = streetFrom(world, best.edge, best.node, rules.boroughLength + 200);
+  const cad = world.cadastre;
+  const { pts: raw, edges } = streetFrom(world, edge, node, rules.boroughLength + 200);
   // Start the town street at the edge of the village.
   const along = resample(raw, 2);
   let startIdx = along.findIndex((p) => !pointInShape(p, core));
@@ -320,8 +310,6 @@ export function plantBorough(world: World, core: Shape): Borough | null {
   const street = trimTo(along.slice(startIdx), rules.boroughLength);
   if (polylineLength(street) < rules.marketLength + 40) return null;
 
-  const year = Math.round(world.clock.now);
-  const cad = world.cadastre;
   const keep = new Set(['meadow', 'toft', 'close', 'churchyard', 'common'] as ParcelKind[]);
   const area = bufferPolyline(street, rules.burgageDepth + 40);
   const blocked = [
@@ -338,7 +326,8 @@ export function plantBorough(world: World, core: Shape): Borough | null {
   const half = rules.marketWidth / 2;
   const roadHalf = WAY_HALF_WIDTH.road + 1;
   // The market place is the street widened, narrowing again beyond it.
-  const offset = (s: number) => (s < rules.marketLength ? half : s < rules.marketLength + 30 ? half - ((half - roadHalf) * (s - rules.marketLength)) / 30 : roadHalf);
+  const offset = (s: number) =>
+    s < rules.marketLength ? half : s < rules.marketLength + 30 ? half - ((half - roadHalf) * (s - rules.marketLength)) / 30 : roadHalf;
   const width = perchWidths(world, rules.burgageWidths);
   const streetName = 'Market Street';
   const plots: CutPlot[] = [];
@@ -349,12 +338,53 @@ export function plantBorough(world: World, core: Shape): Borough | null {
       plots.push(p);
     }
   }
-  if (plots.length < 6) return null;
+  return plots.length >= 6 ? { street, edges, plots, streetName } : null;
+}
 
+/**
+ * Plant a borough: the lord lays out a market place where the busiest road
+ * leaves the village, and burgage plots along the road beyond it. The plots
+ * are cut from whatever the land was — mostly open-field strips, whose lines
+ * the plot boundaries follow — and the strips under them are given up.
+ */
+export function plantBorough(world: World, core: Shape): Borough | null {
+  const rules = world.plugins.technology.plots;
+  const g = world.graph;
+  // Each way leaving the village core is a possible line for the town street.
+  const exits: { edge: GraphEdge; node: number }[] = [];
+  for (const e of g.edges.values()) {
+    if (e.cls === 'path') continue;
+    for (const nodeId of [e.a, e.b]) {
+      if (pointInShape(g.nodes.get(nodeId)!.pos, core) && !pointInShape(g.nodes.get(g.other(e, nodeId))!.pos, core)) {
+        exits.push({ edge: e, node: nodeId });
+      }
+    }
+  }
+  // Try the busiest few, and take the one that gives the most plots on good ground, weighted by traffic.
+  exits.sort((a, b) => b.edge.usage - a.edge.usage);
+  let best: (BoroughLayout & { score: number }) | null = null;
+  for (const exit of exits.slice(0, 5)) {
+    const layout = layOutBorough(world, core, exit.edge, exit.node);
+    if (!layout) continue;
+    const score = layout.plots.length * Math.log(1 + exit.edge.usage);
+    if (!best || score > best.score) best = { ...layout, score };
+  }
+  if (!best) return null;
+  const { street, plots, streetName } = best;
+  const year = Math.round(world.clock.now);
+  const cad = world.cadastre;
+  // The town street is the lord's: made up to at least a lane and kept up.
+  for (const id of best.edges) {
+    const e = g.edges.get(id);
+    if (!e) continue;
+    e.planned = true;
+    if (e.cls === 'path' || e.cls === 'track') e.cls = 'lane';
+  }
   const parcels = plotsFromStrips(world, plots, 'burgage', 'Open-field strips taken for burgage plots');
   const plotShapes = plots.map((p) => p.shape);
 
   const marketLine = trimTo(street, rules.marketLength);
+  const half = rules.marketWidth / 2;
   const market = difference(bufferPolyline(marketLine, half), ...plotShapes)[0] ?? bufferPolyline(marketLine, half);
   const { regime, rights } = world.plugins.tenure.rights('market', cad.lord!, cad);
   cad.addParcel('market', market, regime, rights, year);
