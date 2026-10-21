@@ -12,7 +12,7 @@ The default scenario is an English river valley starting in 900 CE.
 npm install
 npm run dev        # open the printed URL; ?seed=valley&year=1100 picks a seed and fast-forwards
 npm test
-npx vite-node scripts/headless.ts valley 200   # run without a browser and print metrics
+npm run headless -- valley 200   # run without a browser and print metrics
 ```
 
 ## Layout
