@@ -7,10 +7,10 @@ import { dist, polylineLength, resample, simplify, type Vec2 } from './geom';
 import { bufferPolyline, differenceMany, distanceToBoundary, intersection, pointInShape, ringCentroid, shapeArea, type Shape } from './polygon';
 import { clipPolyline, cutFrontage, overlapsAny, perchWidths, type CutPlot } from './plots';
 import type { Parcel, ParcelKind } from './cadastre';
-import type { GraphEdge } from './graph';
+import { WAY_WIDTH, type GraphEdge } from './graph';
 import { mapShape, plotsFromLand, putUpFront, streetFrom, trimTo, wayBuffers, WAY_HALF_WIDTH } from './town';
 import { accessAt } from './landvalue';
-import { crossesBuilding, type World } from './world';
+import { crossesBuilding, crossesSolid, type World } from './world';
 import type { TownPlotRules } from '../plugins/types';
 
 /** Rural parcels a ribbon of new plots may be cut from. */
@@ -69,10 +69,14 @@ function extendAlongWays(world: World, rules: TownPlotRules): number {
     }
   }
   exits.sort((a, b) => b.edge.usage - a.edge.usage);
+  // The busiest ways first, going on to quieter ones until a few could take plots.
   let best: Ribbon | null = null;
-  for (const exit of exits.slice(0, 6)) {
+  let found = 0;
+  for (const exit of exits.slice(0, 16)) {
     const r = layOutRibbon(world, rules, exit.edge, exit.node);
-    if (r && (!best || r.score > best.score)) best = r;
+    if (!r) continue;
+    if (!best || r.score > best.score) best = r;
+    if (++found >= 3) break;
   }
   if (!best) return 0;
   for (const id of best.edges) {
@@ -343,6 +347,15 @@ function layOutField(world: World, plan: FieldPlan, rules: TownPlotRules): numbe
     newEdges.add(e.id);
   }
   if (!newEdges.size) return 0;
+  // Where a new street crosses an old way, or another new one, they meet at a crossroads.
+  const pieces = g.nodeCrossings(newEdges);
+  newEdges.clear();
+  for (const id of pieces) newEdges.add(id);
+  // A street that would run over someone else's plot or yard is not laid out.
+  if ([...newEdges].some((id) => crossesSolid(world, g.edges.get(id)!.pts, WAY_WIDTH.lane / 2, false))) {
+    for (const id of newEdges) g.removeEdge(id);
+    return 0;
+  }
 
   // Plots along the new streets first, then along any old way on the field's edge.
   // Enclosed closes keep every kink of the strips they were pooled from; a simpler outline is enough here.

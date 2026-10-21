@@ -150,8 +150,8 @@ Computed live on the simulated town and tracked over time:
 - later: block shape factor (Louf & Barthélemy 2014), plot frontage/depth,
   building coverage, Dibble et al.'s period variables.
 
-An offline reference pipeline (momepy / OSMnx on real English towns) is a
-stretch goal.
+Fuller validation, including an offline reference pipeline (momepy / OSMnx
+on real English towns), is milestone 7; see `docs/validation.md`.
 
 ## Rendering
 
@@ -213,4 +213,5 @@ stretch goal.
    at the edge, mostly in growth pauses, and their holders rarely sell, so
    later growth jumps over them. Engulfed noisome trades move out. Walkers
    keep to the streets once plots and buildings are in the way.
-7. **Offline reference pipeline** and fuller validation.
+7. **Validation** — physical plausibility, shape and form against real
+   towns, and history; see `docs/validation.md`.

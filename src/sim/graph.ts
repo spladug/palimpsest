@@ -14,6 +14,9 @@ import {
 export const EDGE_CLASSES = ['path', 'track', 'lane', 'road'] as const;
 export type EdgeClass = (typeof EDGE_CLASSES)[number];
 
+/** Width of each class of way on the ground, in metres: what the map draws and what must stay clear. */
+export const WAY_WIDTH: Record<EdgeClass, number> = { path: 1.2, track: 3, lane: 6, road: 10 };
+
 export interface GraphNode {
   id: number;
   pos: Vec2;
@@ -40,6 +43,55 @@ export interface GraphEdge {
   floor?: EdgeClass;
   /** Street name, once it is a named street of the town. */
   name?: string;
+  /** Held to this width (m) where plots hem it in, whatever its class. */
+  maxWidth?: number;
+}
+
+/** How wide a way is on the ground. */
+export function wayWidth(e: GraphEdge): number {
+  return Math.min(WAY_WIDTH[e.cls], e.maxWidth ?? Infinity);
+}
+
+/** Copy what a way is (beyond its geometry and use) onto its replacement. */
+function carry(from: GraphEdge, to: GraphEdge): void {
+  to.yearUse = from.yearUse;
+  to.pressure = from.pressure;
+  to.planned = from.planned;
+  to.floor = from.floor;
+  to.name = from.name;
+  to.maxWidth = from.maxWidth;
+}
+
+/** Where two polylines first cross, strictly inside a segment of each, as distances along them. */
+function firstCrossing(a: readonly Vec2[], b: readonly Vec2[]): { alongA: number; alongB: number } | null {
+  const lenA = polylineLength(a);
+  const lenB = polylineLength(b);
+  let sa = 0;
+  for (let i = 1; i < a.length; i++) {
+    const p = a[i - 1];
+    const q = a[i];
+    const la = dist(p, q);
+    let sb = 0;
+    for (let j = 1; j < b.length; j++) {
+      const r = b[j - 1];
+      const s = b[j];
+      const lb = dist(r, s);
+      const d = (q.x - p.x) * (s.y - r.y) - (q.y - p.y) * (s.x - r.x);
+      if (Math.abs(d) > 1e-9) {
+        const t = ((r.x - p.x) * (s.y - r.y) - (r.y - p.y) * (s.x - r.x)) / d;
+        const u = ((r.x - p.x) * (q.y - p.y) - (r.y - p.y) * (q.x - p.x)) / d;
+        // Keep clear of the ends, where ways properly meet at a node.
+        const ta = sa + t * la;
+        const ub = sb + u * lb;
+        if (t > 0 && t < 1 && u > 0 && u < 1 && ta > 0.5 && ub > 0.5 && ta < lenA - 0.5 && ub < lenB - 0.5) {
+          return { alongA: ta, alongB: ub };
+        }
+      }
+      sb += lb;
+    }
+    sa += la;
+  }
+  return null;
 }
 
 export interface EdgeHit {
@@ -80,6 +132,15 @@ class EdgeIndex {
 
   remove(id: number, pts: readonly Vec2[]): void {
     this.cellsFor(pts, (k) => this.buckets.get(k)?.delete(id));
+  }
+
+  /** Edges sharing a bucket with any segment of a polyline: every edge that could cross it. */
+  along(pts: readonly Vec2[]): Set<number> {
+    const out = new Set<number>();
+    this.cellsFor(pts, (k) => {
+      for (const id of this.buckets.get(k) ?? []) out.add(id);
+    });
+    return out;
   }
 
   near(p: Vec2, r: number): Set<number> {
@@ -213,11 +274,8 @@ export class StreetGraph {
     this.removeEdge(edgeId);
     const e1 = this.addEdge(e.a, mid.id, first, e.cls, e.usage, e.created);
     const e2 = this.addEdge(mid.id, e.b, second, e.cls, e.usage, e.created);
-    e1.yearUse = e2.yearUse = e.yearUse;
-    e1.pressure = e2.pressure = e.pressure;
-    e1.planned = e2.planned = e.planned;
-    e1.floor = e2.floor = e.floor;
-    e1.name = e2.name = e.name;
+    carry(e, e1);
+    carry(e, e2);
     return mid;
   }
 
@@ -239,27 +297,129 @@ export class StreetGraph {
     return this.splitEdge(hit.edge.id, hit.proj.along);
   }
 
-  /** Fold node `drop` into node `keep`, rerouting its edges. */
+  /**
+   * Make a junction wherever the given ways cross another way, so no two ways
+   * pass through each other. Returns the ids of the given ways' pieces.
+   */
+  nodeCrossings(ids: Iterable<number>): number[] {
+    const mine = new Set([...ids].filter((id) => this.edges.has(id)));
+    for (let guard = 0; guard < 200; guard++) {
+      const x = this.findCrossing(mine);
+      if (!x) break;
+      const ea = this.edges.get(x.a)!;
+      const eb = this.edges.get(x.b)!;
+      const ownB = mine.has(eb.id);
+      mine.delete(ea.id);
+      mine.delete(eb.id);
+      const ma = this.splitEdge(ea.id, x.alongA);
+      for (const id of this.edgesAt(ma.id)) mine.add(id);
+      const mb = this.splitEdge(eb.id, x.alongB);
+      const mbEdges = [...this.edgesAt(mb.id)];
+      this.mergeNodes(ma.id, mb.id);
+      // The other way's pieces now hang off the shared node, with new ids.
+      if (ownB) {
+        for (const id of this.edgesAt(ma.id)) mine.add(id);
+      }
+      for (const id of mbEdges) mine.delete(id);
+    }
+    return [...mine].filter((id) => this.edges.has(id));
+  }
+
+  private findCrossing(mine: ReadonlySet<number>): { a: number; b: number; alongA: number; alongB: number } | null {
+    for (const id of mine) {
+      const e = this.edges.get(id);
+      if (!e) continue;
+      for (const oid of this.index.along(e.pts)) {
+        if (oid === id) continue;
+        const f = this.edges.get(oid)!;
+        const x = firstCrossing(e.pts, f.pts);
+        if (x) return { a: id, b: oid, alongA: x.alongA, alongB: x.alongB };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Take out a short edge, folding its node `drop` into `keep`. The ways that
+   * met at `drop` are carried on along the short edge's line to `keep`, rather
+   * than swung straight across to it.
+   */
+  collapseEdge(edgeId: number, keep: number): void {
+    const e = this.edges.get(edgeId)!;
+    const drop = this.other(e, keep);
+    const leg = e.a === drop ? e.pts : e.pts.slice().reverse();
+    this.splitLinks(keep, drop, edgeId);
+    this.removeEdge(edgeId);
+    const k = this.nodes.get(keep)!;
+    const d = this.nodes.get(drop)!;
+    if (k.placeId === null) k.placeId = d.placeId;
+    for (const fid of [...this.edgesAt(drop)]) {
+      const f = this.edges.get(fid)!;
+      const end = this.other(f, drop);
+      this.removeEdge(fid);
+      if (end === keep) continue;
+      const toDrop = f.b === drop ? f.pts : f.pts.slice().reverse();
+      carry(f, this.addEdge(end, keep, removeSpikes([...toDrop, ...leg.slice(1)]), f.cls, f.usage, f.created));
+    }
+    this.adjacency.delete(drop);
+    this.nodes.delete(drop);
+  }
+
+  /**
+   * Fold node `drop` into node `keep`, rerouting its edges. The junction stays
+   * where the weightier ways meet: if `drop` carries them, `keep` moves there
+   * and its own lesser ways are led across to it. Either way, a way that moves
+   * gains a short leg to the new junction rather than swinging its last stretch.
+   */
   mergeNodes(keep: number, drop: number): void {
     if (keep === drop) return;
     const k = this.nodes.get(keep)!;
     const d = this.nodes.get(drop)!;
     if (k.placeId === null) k.placeId = d.placeId;
-    for (const eid of [...this.edgesAt(drop)]) {
-      const e = this.edges.get(eid)!;
-      const a = e.a === drop ? keep : e.a;
-      const b = e.b === drop ? keep : e.b;
-      this.removeEdge(eid);
-      if (a === b) continue;
-      const ne = this.addEdge(a, b, e.pts, e.cls, e.usage, e.created);
-      ne.yearUse = e.yearUse;
-      ne.pressure = e.pressure;
-      ne.planned = e.planned;
-      ne.floor = e.floor;
-      ne.name = e.name;
+    this.splitLinks(keep, drop);
+    if (dist(k.pos, d.pos) > 0.01 && this.weight(drop) > this.weight(keep)) {
+      k.pos = { ...d.pos };
+      for (const eid of [...this.edgesAt(keep)]) this.reroute(eid, keep, keep, k.pos);
     }
+    for (const eid of [...this.edgesAt(drop)]) this.reroute(eid, drop, keep, k.pos);
     this.adjacency.delete(drop);
     this.nodes.delete(drop);
+  }
+
+  /**
+   * A way running between two nodes about to become one would close on
+   * itself; split it in the middle so it survives as a loop of two ways.
+   */
+  private splitLinks(a: number, b: number, except?: number): void {
+    for (const eid of [...this.edgesAt(a)]) {
+      const e = this.edges.get(eid)!;
+      if (eid === except || this.other(e, a) !== b) continue;
+      const len = this.length(e);
+      if (len > dist(this.nodes.get(a)!.pos, this.nodes.get(b)!.pos) + 10) this.splitEdge(eid, len / 2);
+    }
+  }
+
+  /** How much a junction matters: the classes of the ways meeting there, planned streets counting double. */
+  private weight(nodeId: number): number {
+    let w = 0;
+    for (const eid of this.edgesAt(nodeId)) {
+      const e = this.edges.get(eid)!;
+      w += (EDGE_CLASSES.indexOf(e.cls) + 1) * (e.planned ? 2 : 1);
+    }
+    return w;
+  }
+
+  /** Re-attach an edge's `from` end to node `to`, standing at `pos`, by a short added leg. */
+  private reroute(eid: number, from: number, to: number, pos: Vec2): void {
+    const e = this.edges.get(eid)!;
+    const a = e.a === from ? to : e.a;
+    const b = e.b === from ? to : e.b;
+    this.removeEdge(eid);
+    if (a === b) return;
+    const pts = e.pts.slice();
+    if (e.a === from && dist(pts[0], pos) > 0.01) pts.unshift({ ...pos });
+    if (e.b === from && dist(pts[pts.length - 1], pos) > 0.01) pts.push({ ...pos });
+    carry(e, this.addEdge(a, b, removeSpikes(pts), e.cls, e.usage, e.created));
   }
 
   /**
@@ -287,11 +447,10 @@ export class StreetGraph {
     this.adjacency.delete(nodeId);
     this.nodes.delete(nodeId);
     const merged = this.addEdge(start, end, removeSpikes([...p1, ...p2.slice(1)]), e1.cls, usage, Math.min(e1.created, e2.created));
+    carry(e1, merged);
     merged.yearUse = yearUse;
     merged.pressure = Math.min(e1.pressure, e2.pressure);
-    merged.planned = e1.planned;
-    merged.floor = e1.floor;
-    merged.name = e1.name;
+    if (e2.maxWidth !== undefined) merged.maxWidth = Math.min(e2.maxWidth, e1.maxWidth ?? Infinity);
     return true;
   }
 

@@ -48,6 +48,7 @@ function layers(): Layers {
     fields: $<HTMLInputElement>('layer-fields').checked,
     ghosts: $<HTMLInputElement>('layer-ghosts').checked,
     values: $<HTMLInputElement>('layer-values').checked,
+    problems: $<HTMLInputElement>('layer-problems').checked,
   };
 }
 

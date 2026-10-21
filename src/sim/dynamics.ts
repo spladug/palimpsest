@@ -487,7 +487,8 @@ function burgageCycle(world: World): void {
       }
       // A neighbour buys up an empty, fallen plot.
       if (!buildings.length && rng.chance(declining ? 0.04 : 0.01)) {
-        const buyer = [nb.left, nb.right].find((q) => q && q.takenUp !== undefined);
+        // (A neighbour may itself have been merged or split earlier this year.)
+        const buyer = [nb.left, nb.right].find((q) => q && cad.parcels.has(q.id) && q.takenUp !== undefined);
         if (buyer && frontWidth(buyer) + frontWidth(p) < rules.minFrontage * 6) {
           const [l, r] = buyer === nb.left ? [buyer, p] : [p, buyer];
           const keep = buyer.rights;

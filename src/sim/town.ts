@@ -18,9 +18,9 @@ import {
 } from './polygon';
 import { clipPolyline, cutFrontage, frontBuilding, overlapsAny, perchWidths, type CutPlot } from './plots';
 import type { Parcel, ParcelKind } from './cadastre';
-import type { EdgeClass, GraphEdge } from './graph';
+import { WAY_WIDTH, type EdgeClass, type GraphEdge } from './graph';
 import { insertRoute, DEFAULT_INSERT } from './insert';
-import { crossesBuilding, type Place, type World } from './world';
+import { crossesBuilding, crossesSolid, type Place, type World } from './world';
 import type { Rng } from './rng';
 import { wobblyOutline } from './fields';
 
@@ -58,7 +58,9 @@ export function addPlot(world: World, kind: ParcelKind, plot: CutPlot): Parcel {
 /** The churchyard around a church, and the church itself, facing east. */
 export function layOutChurchyard(world: World, church: Place, holder: number): void {
   const yard = intersection(radialPolygon(church.pos, () => 26, 20), mapShape(world))[0];
-  const parts = differenceMany(yard, wayBuffers(world, yard)).filter((p) => shapeArea(p) >= 200);
+  // Short of the ways, and of any land already held (a farm's closes near the meeting of ways).
+  const held = [...world.cadastre.parcels.values()].filter((p) => p.kind !== 'strip').map((p) => p.shape);
+  const parts = differenceMany(yard, [...wayBuffers(world, yard), ...held]).filter((p) => shapeArea(p) >= 200);
   if (!parts.length) return;
   const year = Math.round(world.clock.now);
   const { regime, rights } = world.plugins.tenure.rights('churchyard', holder, world.cadastre);
@@ -251,6 +253,10 @@ export function putUpFront(world: World, plot: Parcel, use: string): boolean {
   if (!type || !plot.frontage) return false;
   const b = frontBuilding(plot.shape, plot.frontage, type.building);
   if (!b) return false;
+  // Whatever stands where the new front goes is pulled down first.
+  for (const old of world.cadastre.buildingsOn(plot.id)) {
+    if (intersection(old.footprint, b.footprint).some((x) => shapeArea(x) > 0.5)) world.cadastre.removeBuilding(old.id);
+  }
   const year = Math.round(world.clock.now);
   world.cadastre.addBuilding({ parcelId: plot.id, use, footprint: b.footprint, ridge: b.ridge, storeys: type.storeys, built: year });
   return true;
@@ -438,6 +444,9 @@ export function plantBorough(world: World, core: Shape): Borough | null {
   return { street, market, marketCentre, plots: parcels.length, streetName };
 }
 
+/** From the back of the plots to a back lane's centreline: half a lane, and room for the line to be simplified. */
+const BACK_LANE_GAP = 5.5;
+
 /** Planned back lanes behind each row of plots, joined to the street at each end. */
 export function addBackLanes(world: World, plots: CutPlot[], street: Vec2[], depth = world.plugins.technology.plots.burgageDepth): boolean {
   let lanes = 0;
@@ -454,7 +463,7 @@ export function addBackLanes(world: World, plots: CutPlot[], street: Vec2[], dep
     const back = row.map((p) => {
       const f = p.frontage;
       const m = { x: (f.a.x + f.b.x) / 2, y: (f.a.y + f.b.y) / 2 };
-      return { x: m.x + f.inward.x * (depth + 3), y: m.y + f.inward.y * (depth + 3) };
+      return { x: m.x + f.inward.x * (depth + BACK_LANE_GAP), y: m.y + f.inward.y * (depth + BACK_LANE_GAP) };
     });
     const first = row[0].frontage.a;
     const last = row[row.length - 1].frontage.b;
@@ -464,9 +473,9 @@ export function addBackLanes(world: World, plots: CutPlot[], street: Vec2[], dep
     // The lane leaves the street just beyond the end plots and runs back beside them, not across them.
     const out = (f: { a: Vec2; b: Vec2; inward: Vec2 }, corner: Vec2, sign: number) => {
       const l = dist(f.a, f.b) || 1;
-      const u = { x: ((f.b.x - f.a.x) / l) * sign * 3, y: ((f.b.y - f.a.y) / l) * sign * 3 };
+      const u = { x: ((f.b.x - f.a.x) / l) * sign * BACK_LANE_GAP, y: ((f.b.y - f.a.y) / l) * sign * BACK_LANE_GAP };
       const front = { x: corner.x + u.x, y: corner.y + u.y };
-      return [front, { x: front.x + f.inward.x * (depth + 3), y: front.y + f.inward.y * (depth + 3) }];
+      return [front, { x: front.x + f.inward.x * (depth + BACK_LANE_GAP), y: front.y + f.inward.y * (depth + BACK_LANE_GAP) }];
     };
     const [startFront, startBack] = out(row[0].frontage, first, -1);
     const [endFront, endBack] = out(row[row.length - 1].frontage, last, 1);
@@ -475,7 +484,7 @@ export function addBackLanes(world: World, plots: CutPlot[], street: Vec2[], dep
       ...DEFAULT_INSERT,
       year: world.clock.now,
       planned: true,
-      allowed: (pts) => !crossesBuilding(world, pts),
+      allowed: (pts) => !crossesBuilding(world, pts) && !crossesSolid(world, pts, WAY_WIDTH.lane / 2, false),
     });
     for (const id of res.newEdges) {
       const e = world.graph.edges.get(id);

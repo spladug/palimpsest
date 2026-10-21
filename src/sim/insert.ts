@@ -176,5 +176,7 @@ export function insertRoute(
       result.usedEdges.push(id);
     }
   }
+  // A new way that crosses another meets it at a junction.
+  if (result.newEdges.length) result.newEdges = graph.nodeCrossings(result.newEdges);
   return result;
 }

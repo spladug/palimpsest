@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createWorld, type World } from '../src/sim/world';
+import { checkWorld } from '../src/sim/validate';
 import { medievalEngland } from '../src/plugins/medieval-england';
 import { townHouseholds } from '../src/sim/dynamics';
 import { nextBackBuilding, splitLengthwise } from '../src/sim/plots';
@@ -110,6 +111,20 @@ describe('a town over the centuries', () => {
       }
     }
     expect(clashes).toEqual([]);
+  });
+
+  it('stays physically plausible: nothing overlaps, stands in the river or off its plot', () => {
+    const v = checkWorld(w);
+    const never = v.filter((x) =>
+      ['parcel overlap', 'sliver parcel', 'building overlap', 'building in the river', 'way crosses the river away from a ford'].includes(x.kind),
+    );
+    expect(never.map((x) => `${x.kind}: ${x.note}`)).toEqual([]);
+    // The rest are rare: a handful in a whole town.
+    expect(v.length).toBeLessThan(20);
+  });
+
+  it('keeps itself close to the size it could support', () => {
+    expect(at[1900].households).toBeGreaterThan(0.75 * w.town.capacity);
   });
 
   it('keeps institutions on the old edge while growth jumps past them (a fringe belt)', () => {

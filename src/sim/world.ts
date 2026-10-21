@@ -2,15 +2,15 @@
 
 import { Clock } from './clock';
 import { dist, resample, smooth, type Vec2 } from './geom';
-import { StreetGraph, EDGE_CLASSES, type EdgeClass } from './graph';
+import { StreetGraph, EDGE_CLASSES, WAY_WIDTH, wayWidth, type EdgeClass, type GraphEdge } from './graph';
 import { DEFAULT_INSERT, insertRoute } from './insert';
 import { Pathfinder, type CostField } from './pathfind';
 import { Raster } from './raster';
 import { Rng } from './rng';
 import { computeMetrics, type Metrics } from './metrics';
-import { Cadastre } from './cadastre';
+import { Cadastre, GROUNDS_KINDS, SOLID_KINDS, TOWN_PLOT_KINDS } from './cadastre';
 import { layOutCloses, rasteriseLandUse } from './fields';
-import { pointInShape, type Shape } from './polygon';
+import { bounds, distanceToBoundary, pointInShape, type Bounds, type Shape } from './polygon';
 import { extendVillage, takeUp, vacantPlots } from './town';
 import { newTownState, townYear, updateValues, type TownState } from './dynamics';
 import type { Plugins, Terrain, TripDemand } from '../plugins/types';
@@ -215,43 +215,123 @@ function travel(world: World, trip: TripDemand, weight: number): boolean {
   insertRoute(world.graph, route, weight, placeNode(world, trip.from), placeNode(world, trip.to), {
     ...DEFAULT_INSERT,
     year: world.clock.now,
-    // A path worn across a yard is one thing; a way through a house is not.
-    allowed: (pts) => !crossesBuilding(world, pts),
+    // Nobody wears a way through a house, or across someone's plot or a churchyard.
+    allowed: (pts) => !crossesBuilding(world, pts) && !crossesSolid(world, pts, WAY_WIDTH.path / 2),
   });
   world.recentRoutes.push(route);
   return true;
 }
 
-/** Buildings by 20 m bucket, rebuilt when the cadastre changes. */
-let buildingIndex: { world: World; version: number; buckets: Map<number, Shape[]> } | null = null;
+/** Shapes by 20 m bucket, rebuilt when the cadastre changes. */
+interface ShapeIndex {
+  world: World;
+  version: number;
+  buckets: Map<number, Shape[]>;
+}
 const BUCKET = 20;
+let buildingIndex: ShapeIndex | null = null;
+let solidIndex: (ShapeIndex & { grounds: ShapeIndex }) | null = null;
+
+function indexShapes(world: World, shapes: Iterable<Shape>): ShapeIndex {
+  const buckets = new Map<number, Shape[]>();
+  for (const shape of shapes) {
+    const b = bounds(shape);
+    for (let by = Math.floor(b.minY / BUCKET); by <= Math.floor(b.maxY / BUCKET); by++) {
+      for (let bx = Math.floor(b.minX / BUCKET); bx <= Math.floor(b.maxX / BUCKET); bx++) {
+        const k = by * 4096 + bx;
+        let list = buckets.get(k);
+        if (!list) buckets.set(k, (list = []));
+        list.push(shape);
+      }
+    }
+  }
+  return { world, version: world.cadastre.version, buckets };
+}
+
+const shapesAt = (index: ShapeIndex, p: Vec2) => index.buckets.get(Math.floor(p.y / BUCKET) * 4096 + Math.floor(p.x / BUCKET));
 
 /** Whether a line passes through any building. */
 export function crossesBuilding(world: World, pts: readonly Vec2[]): boolean {
   const cad = world.cadastre;
   if (!buildingIndex || buildingIndex.world !== world || buildingIndex.version !== cad.version) {
-    const buckets = new Map<number, Shape[]>();
-    for (const b of cad.buildings.values()) {
-      const bb = b.footprint[0];
-      const xs = bb.map((p) => p.x);
-      const ys = bb.map((p) => p.y);
-      for (let by = Math.floor(Math.min(...ys) / BUCKET); by <= Math.floor(Math.max(...ys) / BUCKET); by++) {
-        for (let bx = Math.floor(Math.min(...xs) / BUCKET); bx <= Math.floor(Math.max(...xs) / BUCKET); bx++) {
-          const k = by * 4096 + bx;
-          let list = buckets.get(k);
-          if (!list) buckets.set(k, (list = []));
-          list.push(b.footprint);
-        }
-      }
-    }
-    buildingIndex = { world, version: cad.version, buckets };
+    buildingIndex = indexShapes(world, [...cad.buildings.values()].map((b) => b.footprint));
   }
   for (const p of resample(pts, 1.5)) {
-    const list = buildingIndex.buckets.get(Math.floor(p.y / BUCKET) * 4096 + Math.floor(p.x / BUCKET));
-    if (list?.some((f) => pointInShape(p, f))) return true;
+    if (shapesAt(buildingIndex, p)?.some((f) => pointInShape(p, f))) return true;
   }
   return false;
 }
+
+/**
+ * Whether a way of the given half-width along a line would run onto a plot,
+ * churchyard or precinct. Unless told otherwise, the grounds of an institution
+ * at either end don't count: a path may lead in from the gate.
+ */
+export function crossesSolid(world: World, pts: readonly Vec2[], halfWidth = 0, intoGrounds = true): boolean {
+  const cad = world.cadastre;
+  if (!solidIndex || solidIndex.world !== world || solidIndex.version !== cad.version) {
+    const solid = [...cad.parcels.values()].filter((p) => SOLID_KINDS.has(p.kind));
+    solidIndex = {
+      ...indexShapes(world, solid.map((p) => p.shape)),
+      grounds: indexShapes(world, solid.filter((p) => GROUNDS_KINDS.has(p.kind)).map((p) => p.shape)),
+    };
+  }
+  const ends = intoGrounds
+    ? [pts[0], pts[pts.length - 1]].flatMap((p) => shapesAt(solidIndex!.grounds, p)?.filter((s) => pointInShape(p, s)) ?? [])
+    : [];
+  // A tenth of a metre's grace, for ways laid exactly along a boundary.
+  const reach = Math.max(0, halfWidth - 0.1);
+  for (const p of resample(pts, 1)) {
+    const near = new Set<Shape>();
+    for (const q of [p, { x: p.x - reach, y: p.y - reach }, { x: p.x + reach, y: p.y + reach }, { x: p.x - reach, y: p.y + reach }, { x: p.x + reach, y: p.y - reach }]) {
+      for (const s of shapesAt(solidIndex, q) ?? []) near.add(s);
+    }
+    for (const s of near) {
+      if (ends.includes(s)) continue;
+      const inside = pointInShape(p, s);
+      const d = distanceToBoundary(p, s);
+      if ((inside && d > 0.1) || (!inside && d < reach)) return true;
+    }
+  }
+  return false;
+}
+
+/** Whether a way runs past the front of a town plot, which needs it for access. */
+function frontsPlots(world: World, e: GraphEdge): boolean {
+  const b = bounds([e.pts]);
+  const reach = WAY_WIDTH.road / 2 + 6;
+  for (const p of world.cadastre.parcels.values()) {
+    if (!TOWN_PLOT_KINDS.has(p.kind) || !p.frontage) continue;
+    const m = { x: (p.frontage.a.x + p.frontage.b.x) / 2, y: (p.frontage.a.y + p.frontage.b.y) / 2 };
+    if (m.x < b.minX - reach || m.x > b.maxX + reach || m.y < b.minY - reach || m.y > b.maxY + reach) continue;
+    if (world.graph.nearestEdge(m, reach)?.edge.id === e.id) return true;
+  }
+  return false;
+}
+
+/**
+ * The widest a way can be made, up to `want`, without running onto plots or
+ * buildings beside it: twice the gap from its centreline to the nearest.
+ */
+function roomFor(world: World, e: GraphEdge, want: number, have: number): number {
+  const wb = bounds([e.pts]);
+  const reach = { minX: wb.minX - want, minY: wb.minY - want, maxX: wb.maxX + want, maxY: wb.maxY + want };
+  const near = [
+    ...[...world.cadastre.parcels.values()].filter((p) => SOLID_KINDS.has(p.kind)).map((p) => p.shape),
+    ...[...world.cadastre.buildings.values()].map((b) => b.footprint),
+  ].filter((s) => overlapsBounds(reach, bounds(s)));
+  let gap = want / 2;
+  for (const p of resample(e.pts, 1)) {
+    for (const s of near) {
+      // Something the way already runs over can't hold it back now.
+      if (pointInShape(p, s)) continue;
+      gap = Math.min(gap, distanceToBoundary(p, s));
+    }
+  }
+  return Math.max(have, Math.min(want, Math.floor(gap * 2 * 2) / 2));
+}
+
+const overlapsBounds = (a: Bounds, b: Bounds) => a.minX < b.maxX && b.minX < a.maxX && a.minY < b.maxY && b.minY < a.maxY;
 
 /** Returns the cells whose wear changed. */
 function depositWear(world: World, route: Vec2[], weight: number): Set<number> {
@@ -319,8 +399,14 @@ function updateHierarchy(world: World, now: number, immediate = false): void {
     if (e.usage > upgradeAt[e.cls] && level < EDGE_CLASSES.length - 1) {
       e.pressure = Math.max(1, e.pressure + 1);
       if (immediate || e.pressure >= patience) {
+        const before = wayWidth(e);
         e.cls = nextClass(e.cls, e.usage, upgradeAt);
         e.pressure = 0;
+        // A busier way is made wider only where nothing stands in the way.
+        if (WAY_WIDTH[e.cls] > before && world.cadastre.parcels.size) {
+          const w = roomFor(world, e, WAY_WIDTH[e.cls], before);
+          if (w < WAY_WIDTH[e.cls]) e.maxWidth = w;
+        }
       }
     } else if (e.usage < downgradeAt[e.cls] && now - e.created > patience) {
       e.pressure = Math.min(-1, e.pressure - 1);
@@ -328,7 +414,9 @@ function updateHierarchy(world: World, now: number, immediate = false): void {
         // Planned ways are kept up: back lanes may decline to a track, town streets no lower than a lane.
         const floor = e.planned ? EDGE_CLASSES.indexOf(e.floor ?? 'track') : -1;
         if (level <= floor) e.pressure = 0;
-        else if (level === 0) g.removeEdge(e.id);
+        // A way the plots along it open onto is kept, however little it carries.
+        else if (level === 0 && !frontsPlots(world, e)) g.removeEdge(e.id);
+        else if (level === 0) e.pressure = 0;
         else e.cls = EDGE_CLASSES[level - 1];
         e.pressure = 0;
       }
@@ -374,6 +462,7 @@ function consolidateParallel(world: World): void {
     if (best === null || bestCount < samples.length * PARALLEL_SHARE) continue;
     const f = g.edges.get(best)!;
     if (EDGE_CLASSES.indexOf(f.cls) < EDGE_CLASSES.indexOf(e.cls) && f.usage < e.usage) continue;
+    if (frontsPlots(world, e)) continue;
     f.usage += e.usage;
     f.yearUse += e.yearUse;
     const ends = [e.a, e.b];
@@ -386,7 +475,7 @@ function consolidateParallel(world: World): void {
       if (dist(j.pos, node.pos) < 10) {
         const keepNode = node.placeId !== null ? nodeId : j.id;
         g.mergeNodes(keepNode, keepNode === nodeId ? j.id : nodeId);
-      } else {
+      } else if (!crossesBuilding(world, [node.pos, j.pos]) && !crossesSolid(world, [node.pos, j.pos], wayWidth(e) / 2)) {
         g.addEdge(nodeId, j.id, [node.pos, j.pos], e.cls, e.usage, e.created);
       }
     }
@@ -403,7 +492,7 @@ function tidyGraph(world: World): void {
     if (a.placeId !== null && b.placeId !== null) continue;
     // Keep the place node, else the busier junction.
     const keepA = a.placeId !== null || (b.placeId === null && g.degree(a.id) >= g.degree(b.id));
-    g.mergeNodes(keepA ? a.id : b.id, keepA ? b.id : a.id);
+    g.collapseEdge(e.id, keepA ? a.id : b.id);
   }
   for (const n of [...g.nodes.values()]) {
     if (!g.nodes.has(n.id)) continue;

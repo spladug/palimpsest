@@ -13,7 +13,10 @@ npm install
 npm run dev        # open the printed URL; ?seed=valley&year=1100 picks a seed and fast-forwards
 npm test
 npm run headless -- valley 200   # run without a browser and print metrics
+npm run validate                 # run 8 seeds to 1900 and count physical implausibilities
 ```
+
+Validation plan and results: [`docs/validation.md`](docs/validation.md).
 
 ## Layout
 

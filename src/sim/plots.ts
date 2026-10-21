@@ -89,6 +89,26 @@ export function cutFrontage(street: readonly Vec2[], side: 1 | -1, opts: Frontag
     return { along: s, front, dir, normal: n };
   };
 
+  /** Points on the front line strictly between two stations, if they run in order along the chord. */
+  const frontBetween = (p: Station, q: Station): Vec2[] => {
+    const cx = q.front.x - p.front.x;
+    const cy = q.front.y - p.front.y;
+    const c2 = cx * cx + cy * cy;
+    const pts: Vec2[] = [];
+    let last = 0;
+    for (let t = p.along + 2; t < q.along - 1; t += 2) {
+      const { p: c, t: tan } = at(t);
+      const off = opts.offset(t);
+      const f = { x: c.x - tan.y * side * off, y: c.y + tan.x * side * off };
+      const k = ((f.x - p.front.x) * cx + (f.y - p.front.y) * cy) / c2;
+      // On the inside of a tight bend the offset line loops back on itself: keep the chord there.
+      if (k <= last || k >= 1) return [];
+      last = k;
+      pts.push(f);
+    }
+    return pts;
+  };
+
   const out: CutPlot[] = [];
   let prev = station(from);
   let s = from;
@@ -104,7 +124,8 @@ export function cutFrontage(street: readonly Vec2[], side: 1 | -1, opts: Frontag
       backA = back(prev, prev.normal);
       backB = back(next, next.normal);
     }
-    const quad: Shape = [[prev.front, next.front, backB, backA]];
+    // The front follows the street round a bend rather than cutting the corner on a chord.
+    const quad: Shape = [[prev.front, ...frontBetween(prev, next), next.front, backB, backA]];
     const mid = { x: (prev.front.x + next.front.x) / 2, y: (prev.front.y + next.front.y) / 2 };
     const inward = { x: (prev.dir.x + next.dir.x) / 2, y: (prev.dir.y + next.dir.y) / 2 };
     const probe = { x: mid.x + inward.x * 3, y: mid.y + inward.y * 3 };
@@ -114,16 +135,53 @@ export function cutFrontage(street: readonly Vec2[], side: 1 | -1, opts: Frontag
         if (pointInShape(probe, part) && (!best || shapeArea(part) > shapeArea(best))) best = part;
       }
     }
-    if (best && shapeArea(best) >= (opts.minArea ?? 150)) {
+    // A plot's front is the stretch where it actually reaches the street: where land beside
+    // it was not to be had, it is narrower than the cut. Too little of a front, and it is no plot.
+    const front = best && frontRun(best, prev.front, next.front, inward);
+    if (best && front && dist(front.a, front.b) >= MIN_FRONT && shapeArea(best) >= (opts.minArea ?? 150)) {
       out.push({
         shape: best,
-        frontage: { a: prev.front, b: next.front, inward, street: opts.street },
+        frontage: { a: front.a, b: front.b, inward, street: opts.street },
         along: (prev.along + next.along) / 2,
       });
     }
     prev = next;
   }
   return out;
+}
+
+/** The narrowest front a plot can have and still be built on. */
+const MIN_FRONT = 4;
+/** The narrowest house worth building (a one-room cottage is about this wide). */
+const MIN_HOUSE_WIDTH = 3.6;
+
+/**
+ * The longest stretch of a front line (a to b) along which the plot lies just
+ * behind it, and fills the ground for a few metres back.
+ */
+function frontRun(plot: Shape, a: Vec2, b: Vec2, inward: Vec2): { a: Vec2; b: Vec2 } | null {
+  const len = dist(a, b);
+  const il = Math.hypot(inward.x, inward.y) || 1;
+  const n = { x: inward.x / il, y: inward.y / il };
+  const at = (t: number, back: number) => ({ x: a.x + (b.x - a.x) * t + n.x * back, y: a.y + (b.y - a.y) * t + n.y * back });
+  const steps = Math.max(2, Math.ceil(len / 0.5));
+  let best: [number, number] | null = null;
+  let start = -1;
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const ok = i < steps && [0.6, 2, 3.5].every((d) => pointInShape(at(t, d), plot));
+    if (ok && start < 0) start = t;
+    if (!ok && start >= 0) {
+      const end = (i - 1) / steps;
+      if (!best || end - start > best[1] - best[0]) best = [start, end];
+      start = -1;
+    }
+  }
+  if (!best) return null;
+  // Snap to the cut ends when the run reaches within a step of them.
+  const t0 = best[0] <= 1.5 / steps ? 0 : best[0];
+  const t1 = best[1] >= 1 - 1.5 / steps ? 1 : best[1];
+  return { a: at(t0, 0), b: at(t1, 0) };
 }
 
 export interface BuildingSpec {
@@ -146,20 +204,24 @@ export function frontBuilding(plot: Shape, f: Frontage, spec: BuildingSpec): { f
   let n = { x: -u.y, y: u.x };
   if (n.x * f.inward.x + n.y * f.inward.y < 0) n = { x: -n.x, y: -n.y };
   const gap = spec.width === 'full' ? 0.3 : Math.max(spec.sideGap ?? 1.5, (fw - spec.width) / 2);
-  const w = Math.max(3, fw - 2 * gap);
+  const w = fw - 2 * gap;
+  // Too narrow for a house: the plot stays a yard or garden.
+  if (w < MIN_HOUSE_WIDTH) return null;
   const a = { x: f.a.x + u.x * gap + n.x * spec.setback, y: f.a.y + u.y * gap + n.y * spec.setback };
   const corner = (du: number, dn: number) => ({ x: a.x + u.x * du + n.x * dn, y: a.y + u.y * du + n.y * dn });
-  const rect: Shape = [[corner(0, 0), corner(w, 0), corner(w, spec.depth), corner(0, spec.depth)]];
-  const clipped = intersection(rect, plot);
-  if (!clipped.length) return null;
-  const footprint = clipped.reduce((x, y) => (shapeArea(y) > shapeArea(x) ? y : x));
-  if (shapeArea(footprint) < 12) return null;
-  // The ridge runs along the longer side.
-  const ridge: [Vec2, Vec2] =
-    w >= spec.depth
-      ? [corner(0, spec.depth / 2), corner(w, spec.depth / 2)]
-      : [corner(w / 2, 0), corner(w / 2, spec.depth)];
-  return { footprint, ridge };
+  // Where the plot narrows behind the front, build shallower rather than squeeze the house into a wedge.
+  for (const depth of [spec.depth, spec.depth * 0.8, spec.depth * 0.6]) {
+    const rect: Shape = [[corner(0, 0), corner(w, 0), corner(w, depth), corner(0, depth)]];
+    const clipped = intersection(rect, plot);
+    if (!clipped.length) continue;
+    const footprint = clipped.reduce((x, y) => (shapeArea(y) > shapeArea(x) ? y : x));
+    if (shapeArea(footprint) < Math.max(12, 0.9 * w * depth)) continue;
+    // The ridge runs along the longer side.
+    const ridge: [Vec2, Vec2] =
+      w >= depth ? [corner(0, depth / 2), corner(w, depth / 2)] : [corner(w / 2, 0), corner(w / 2, depth)];
+    return { footprint, ridge };
+  }
+  return null;
 }
 
 /**
@@ -263,7 +325,8 @@ export function nextBackBuilding(
       const rect = frameRect(fr, u0, u0 + w, n0, n0 + size.depth);
       const inside = intersection(rect, plot);
       const area = inside.reduce((s, x) => s + shapeArea(x), 0);
-      if (area < w * size.depth * 0.9) continue;
+      // Wholly within the plot: a range doesn't lean over the neighbour's wall.
+      if (area < w * size.depth * 0.995) continue;
       // Keep clear of what stands, with a narrow passage between.
       const grown = frameRect(fr, u0 - 0.2, u0 + w + 0.2, n0 - 1, n0 + size.depth + 1);
       if (existing.some((b) => intersection(grown, b).some((x) => shapeArea(x) > 0.5))) continue;

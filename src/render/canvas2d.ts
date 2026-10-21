@@ -3,7 +3,8 @@
 import { cropIn, type Parcel } from '../sim/cadastre';
 import type { Vec2 } from '../sim/geom';
 import type { Shape } from '../sim/polygon';
-import type { EdgeClass } from '../sim/graph';
+import { wayWidth, type EdgeClass } from '../sim/graph';
+import { checkWorld, type Violation } from '../sim/validate';
 import { Raster } from '../sim/raster';
 import type { World } from '../sim/world';
 
@@ -14,6 +15,8 @@ export interface Layers {
   fields: boolean;
   ghosts: boolean;
   values: boolean;
+  /** Ring every physical implausibility the validation checks find. */
+  problems: boolean;
 }
 
 const CROP_COLOUR = {
@@ -92,18 +95,16 @@ const VALUE_COLOUR = ['#f3e9c6', '#efd49a', '#e7b46e', '#d98b4e', '#c4603a', '#9
 
 interface WayStyle {
   width: number;
-  /** Width on the ground in metres; ways are never drawn narrower than this. */
-  metres: number;
   colour: string;
   casing?: string;
   dash?: number[];
 }
 
 const WAY_STYLES: Record<EdgeClass, WayStyle> = {
-  path: { width: 1, metres: 1.2, colour: '#8a7a62', dash: [3, 3] },
-  track: { width: 1.8, metres: 3, colour: '#8b6b43' },
-  lane: { width: 3, metres: 6, colour: '#d9c79f', casing: '#6b4a2a' },
-  road: { width: 4.5, metres: 10, colour: '#f2e4b8', casing: '#4a3320' },
+  path: { width: 1, colour: '#8a7a62', dash: [3, 3] },
+  track: { width: 1.8, colour: '#8b6b43' },
+  lane: { width: 3, colour: '#d9c79f', casing: '#6b4a2a' },
+  road: { width: 4.5, colour: '#f2e4b8', casing: '#4a3320' },
 };
 
 export class MapView {
@@ -213,6 +214,30 @@ export class MapView {
     this.drawFords(world);
     if (layers.labels) this.drawStreetNames(world);
     this.drawPlaces(world, layers.labels);
+    if (layers.problems) this.drawProblems(world);
+  }
+
+  private problems: { world: World; year: number; version: number; at: number; list: Violation[] } | null = null;
+
+  private drawProblems(world: World): void {
+    const year = Math.floor(world.clock.now);
+    const p = this.problems;
+    // The checks take a while on a big town: while it runs on, look again at most every couple of seconds.
+    const stale = !p || p.world !== world || ((p.year !== year || p.version !== world.cadastre.version) && performance.now() - p.at > 2000);
+    if (stale) this.problems = { world, year, version: world.cadastre.version, at: performance.now(), list: checkWorld(world) };
+    const ctx = this.ctx;
+    ctx.setLineDash([]);
+    ctx.strokeStyle = '#d0202a';
+    ctx.fillStyle = '#d0202a';
+    ctx.lineWidth = this.px(2);
+    ctx.font = `${this.px(11)}px system-ui, sans-serif`;
+    ctx.textBaseline = 'middle';
+    for (const v of this.problems!.list) {
+      ctx.beginPath();
+      ctx.arc(v.at.x, v.at.y, Math.max(this.px(7), 3), 0, Math.PI * 2);
+      ctx.stroke();
+      if (this.scale > 1.2) ctx.fillText(v.kind, v.at.x + Math.max(this.px(10), 4), v.at.y);
+    }
   }
 
   private parcelPaths(world: World): ParcelPaths {
@@ -445,14 +470,22 @@ export class MapView {
     const edges = [...world.graph.edges.values()];
     const stroke = (cls: EdgeClass, colour: string, width: number, dash?: number[], extra = 0) => {
       ctx.strokeStyle = colour;
-      ctx.lineWidth = Math.max(this.px(width), WAY_STYLES[cls].metres + extra / this.scale);
       ctx.setLineDash(dash ? dash.map((d) => this.px(d)) : []);
-      ctx.beginPath();
+      // Ways hemmed in by plots are narrower than their class: one stroke per width on the ground.
+      const byWidth = new Map<number, typeof edges>();
       for (const e of edges) {
         if (e.cls !== cls) continue;
-        e.pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+        const w = wayWidth(e);
+        let list = byWidth.get(w);
+        if (!list) byWidth.set(w, (list = []));
+        list.push(e);
       }
-      ctx.stroke();
+      for (const [metres, list] of byWidth) {
+        ctx.lineWidth = Math.max(this.px(width), metres + extra / this.scale);
+        ctx.beginPath();
+        for (const e of list) e.pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+        ctx.stroke();
+      }
     };
     for (const cls of order) {
       const s = WAY_STYLES[cls];

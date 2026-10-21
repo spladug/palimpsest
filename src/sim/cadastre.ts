@@ -23,6 +23,14 @@ export type ParcelKind =
   /** Ground taken by a land-hungry trade or industry: tenter ground, tannery, brickworks. */
   | 'works';
 
+/** Plots that stand in a built-up place and need a street in front of them. */
+export const TOWN_PLOT_KINDS: ReadonlySet<ParcelKind> = new Set(['toft', 'burgage', 'plot']);
+/** Parcels no way may run through: fields, commons and market places may have ways across them. */
+export const SOLID_KINDS: ReadonlySet<ParcelKind> = new Set(['toft', 'burgage', 'plot', 'churchyard', 'precinct', 'works']);
+
+/** The grounds of an institution or a works, which ways lead into from a gate. */
+export const GROUNDS_KINDS: ReadonlySet<ParcelKind> = new Set(['precinct', 'works']);
+
 /** How a parcel is held overall; the detail is in its rights. */
 export type Regime = 'private' | 'use-right' | 'common';
 
