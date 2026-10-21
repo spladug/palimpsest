@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Town growth</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section class="map-wrap">
+        <canvas id="map" aria-label="Map of the valley"></canvas>
+        <div class="year" id="year">900</div>
+      </section>
+      <aside class="panel">
+        <header>
+          <h1>Town growth</h1>
+          <p class="sub">An English river valley, from 900 CE</p>
+        </header>
+
+        <div class="controls">
+          <button id="play" class="primary">Play</button>
+          <button id="step">+10 years</button>
+          <label class="field">
+            Speed
+            <select id="speed">
+              <option value="2">2 yrs/s</option>
+              <option value="5" selected>5 yrs/s</option>
+              <option value="10">10 yrs/s</option>
+              <option value="25">25 yrs/s</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="controls">
+          <label class="field grow">
+            Seed
+            <input id="seed" type="text" spellcheck="false" />
+          </label>
+          <button id="reset">New valley</button>
+        </div>
+
+        <fieldset class="layers">
+          <legend>Show</legend>
+          <label><input type="checkbox" id="layer-wear" /> Ground wear</label>
+          <label><input type="checkbox" id="layer-routes" /> This year's journeys</label>
+          <label><input type="checkbox" id="layer-labels" checked /> Names</label>
+        </fieldset>
+
+        <section>
+          <h2>Ways</h2>
+          <dl class="stats" id="ways"></dl>
+        </section>
+
+        <section>
+          <h2>Network shape</h2>
+          <dl class="stats" id="shape"></dl>
+        </section>
+
+        <section>
+          <h2>Chronicle</h2>
+          <ol class="log" id="log"></ol>
+        </section>
+      </aside>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
