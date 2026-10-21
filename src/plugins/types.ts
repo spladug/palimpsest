@@ -70,8 +70,23 @@ export interface FieldRules {
   closeRadius: number;
   /** Spacing of close boundaries. */
   closeSpacing: number;
-  /** Typical spacing between furlong centres. */
+  /** Typical spacing between the seeds furlongs are grown from. */
   furlongSpacing: number;
+  /** Length of a furlong along its strips (a ploughing length), and its breadth across them. */
+  furlongLength: { min: number; max: number };
+  furlongBreadth: { min: number; max: number };
+  /** Distance over which the lie of the land is judged, smoothing out hummocks. */
+  furlongLie: number;
+  /** Turn in the slope (radians) at which a furlong ends and a new one begins. */
+  furlongTurn: number;
+  /** Angle (radians) within which a furlong is turned to lie with or across its neighbour. */
+  furlongSnap: number;
+  /** How far a strip may stop short of its furlong's square headland, where a neighbour cuts across at a slant. */
+  headlandSlack: number;
+  /** Average width below which a leftover piece is a grass balk rather than a gore. */
+  minGoreWidth: number;
+  /** On the flat, chance a furlong lies across its neighbour rather than alongside. */
+  crossFurlong: number;
   minFurlongArea: number;
   stripWidth: { mean: number; sd: number; min: number; max: number };
   minStripArea: number;

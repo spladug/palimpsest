@@ -259,8 +259,16 @@ const technology: TechnologyPlugin = {
   fields: {
     closeRadius: 130,
     closeSpacing: 55,
-    // A furlong's strips were about a furlong (220 yards, ~200 m) long.
     furlongSpacing: 190,
+    // A furlong's strips were about a furlong (220 yards, ~200 m) long; blocks were of any breadth.
+    furlongLength: { min: 140, max: 240 },
+    furlongBreadth: { min: 60, max: 220 },
+    furlongLie: 60,
+    furlongTurn: (40 * Math.PI) / 180,
+    furlongSnap: (25 * Math.PI) / 180,
+    headlandSlack: 15,
+    minGoreWidth: 12,
+    crossFurlong: 0.5,
     minFurlongArea: 4000,
     // Selions of roughly 5–22 m (1–4 perches) wide.
     stripWidth: { mean: 13, sd: 4, min: 6, max: 24 },

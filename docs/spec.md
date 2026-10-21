@@ -166,8 +166,11 @@ stretch goal.
    metrics, new farmsteads drawn to tracks. *Done.*
 2. **Countryside** — field pipeline, strip allocation, open-field event.
    *Done:* farmsteads get hedged closes; the open-field event (c. 1000–1080)
-   pools the township, lays out furlongs (Voronoi cells classed as arable,
-   meadow or common by terrain) cut into reverse-S strips running downslope,
+   pools the township, lays out furlongs (blocks about a ploughing length
+   along strips running downslope, grown out from one another so they share
+   headlands, and stopping at wet or steep ground, a turn in the slope, ways
+   and the river; leftovers become meadow, common or gores) cut into
+   reverse-S strips,
    allocates them by sun-division with demesne blocks and glebe, and draws
    most households into a nucleated village by the church (deserted
    farmsteads' ways then fade). Standing crops are costly to walk across, so

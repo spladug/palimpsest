@@ -39,6 +39,23 @@ describe('open fields', () => {
     expect(r.management).toBe(cad.community);
     expect(r.alienation).toBe(cad.lord);
     expect(r.build).toBeUndefined();
+    // Furlongs are blocks along their strips: most of each outline runs with or across them.
+    const squareness = [...cad.furlongs.values()].map((f) => {
+      let along = 0;
+      let total = 0;
+      const ring = f.shape[0];
+      for (let i = 0; i < ring.length; i++) {
+        const a = ring[i];
+        const b = ring[(i + 1) % ring.length];
+        const len = Math.hypot(b.x - a.x, b.y - a.y);
+        const off = Math.abs(Math.sin(2 * (Math.atan2(b.y - a.y, b.x - a.x) - f.orientation)));
+        if (off < Math.sin((2 * 10 * Math.PI) / 180)) along += len;
+        total += len;
+      }
+      return along / total;
+    });
+    squareness.sort((a, b) => a - b);
+    expect(squareness[squareness.length >> 1]).toBeGreaterThan(0.6);
     // Their old closes were thrown into the fields, leaving ghost boundaries.
     expect(cad.ghosts.length).toBeGreaterThan(0);
   }, 60_000);
