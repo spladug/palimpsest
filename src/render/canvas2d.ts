@@ -85,6 +85,8 @@ export class MapView {
   selectedHolder: number | null = null;
   selectedParcel: Parcel | null = null;
   onClick: ((world: Vec2) => void) | null = null;
+  /** Called when the user pans or zooms, so the owner can redraw. */
+  onChange: (() => void) | null = null;
 
   constructor(private canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
@@ -114,6 +116,7 @@ export class MapView {
       this.origin.x -= (e.clientX - drag.x) / this.scale;
       this.origin.y -= (e.clientY - drag.y) / this.scale;
       drag = { x: e.clientX, y: e.clientY };
+      this.onChange?.();
     });
     this.canvas.addEventListener('pointerup', (e) => {
       drag = null;
@@ -133,6 +136,7 @@ export class MapView {
         this.scale *= Math.exp(-e.deltaY * 0.0015);
         this.scale = Math.max(0.05, Math.min(20, this.scale));
         this.origin = { x: before.x - mx / this.scale, y: before.y - my / this.scale };
+        this.onChange?.();
       },
       { passive: false },
     );

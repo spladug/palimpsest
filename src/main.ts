@@ -64,25 +64,51 @@ function advance(years: number, maxBacklog: number): void {
 }
 
 let last = performance.now();
+/** Whether the map needs drawing again, and whether a frame is already booked. */
+let dirty = true;
+let frameQueued = false;
 let lastLogLen = -1;
 let lastMetricsLen = -1;
 let lastCadastreVersion = -1;
 let lastInspectYear = -1;
 
+/**
+ * Frames run only while there is something to do: the simulation is playing
+ * or stepping, or the view has changed. The map is redrawn only when the
+ * year or the view changes, so an idle page costs nothing.
+ */
 function frame(now: number): void {
+  frameQueued = false;
   const dt = Math.min(0.25, (now - last) / 1000);
   last = now;
+  const year = Math.floor(world.clock.now);
   if (playing) advance(dt * Number(speedSelect.value), 2);
   else if (owed >= 1) advance(0, Infinity);
-  view.draw(world, layers());
-  $('year').textContent = `${Math.floor(world.clock.now)}`;
-  if (world.log.length !== lastLogLen) renderLog();
-  if (world.metrics.length !== lastMetricsLen) renderMetrics();
-  if (world.cadastre.version !== lastCadastreVersion || Math.floor(world.clock.now) !== lastInspectYear) {
-    renderLand();
-    renderInspector();
+  if (Math.floor(world.clock.now) !== year) dirty = true;
+  if (dirty) {
+    dirty = false;
+    view.draw(world, layers());
+    $('year').textContent = `${Math.floor(world.clock.now)}`;
+    if (world.log.length !== lastLogLen) renderLog();
+    if (world.metrics.length !== lastMetricsLen) renderMetrics();
+    if (world.cadastre.version !== lastCadastreVersion || Math.floor(world.clock.now) !== lastInspectYear) {
+      renderLand();
+      renderInspector();
+    }
   }
+  if (playing || owed >= 1) schedule();
+}
+
+function schedule(): void {
+  if (frameQueued) return;
+  frameQueued = true;
   requestAnimationFrame(frame);
+}
+
+/** Ask for the map to be drawn again on the next frame. */
+function redraw(): void {
+  dirty = true;
+  schedule();
 }
 
 function renderLog(): void {
@@ -242,7 +268,11 @@ view.onClick = (p) => {
   const kind = holder !== undefined ? world.cadastre.holders.get(holder)?.kind : undefined;
   view.selectedHolder = kind === 'household' || kind === 'lord' || kind === 'church' ? holder! : null;
   renderInspector();
+  redraw();
 };
+view.onChange = redraw;
+window.addEventListener('resize', redraw);
+document.querySelector('.layers')!.addEventListener('change', redraw);
 
 function fill(id: string, rows: [string, string][]): void {
   const dl = $(id);
@@ -259,14 +289,21 @@ function fill(id: string, rows: [string, string][]): void {
 playBtn.addEventListener('click', () => {
   playing = !playing;
   playBtn.textContent = playing ? 'Pause' : 'Play';
+  // Don't count the idle time before pressing play as simulated time.
+  last = performance.now();
+  redraw();
 });
-$('step').addEventListener('click', () => (owed += 10));
+$('step').addEventListener('click', () => {
+  owed += 10;
+  redraw();
+});
 $('reset').addEventListener('click', () => {
   const seed = seedInput.value.trim() || randomSeed();
   world = newWorld(seed === world.seed ? randomSeed() : seed);
   lastLogLen = lastMetricsLen = lastCadastreVersion = -1;
   view.selectedParcel = null;
   view.selectedHolder = null;
+  redraw();
 });
 seedInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
@@ -274,6 +311,7 @@ seedInput.addEventListener('keydown', (e) => {
     lastLogLen = lastMetricsLen = lastCadastreVersion = -1;
     view.selectedParcel = null;
     view.selectedHolder = null;
+    redraw();
   }
 });
 
@@ -285,7 +323,9 @@ if (zoom && zoom.length === 3 && zoom.every(Number.isFinite)) {
   view.origin = { x: zoom[0] - r.width / 2 / zoom[2], y: zoom[1] - r.height / 2 / zoom[2] };
 }
 
-requestAnimationFrame(frame);
+redraw();
+// Labels are measured with the web font; draw again once it has loaded.
+document.fonts?.ready.then(redraw);
 
 // For poking at the simulation from the console or test tools (dev builds only).
 if (import.meta.env.DEV) {
