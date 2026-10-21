@@ -1,8 +1,9 @@
 import { medievalEngland } from './plugins/medieval-england';
 import { MapView, type Layers } from './render/canvas2d';
 import { createWorld, type World } from './sim/world';
-import { cropIn, type Parcel } from './sim/cadastre';
+import { cropIn, type Parcel, type PlotPhase } from './sim/cadastre';
 import type { Right } from './plugins/types';
+import { shapeArea as polygonArea } from './sim/polygon';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -46,6 +47,7 @@ function layers(): Layers {
     labels: $<HTMLInputElement>('layer-labels').checked,
     fields: $<HTMLInputElement>('layer-fields').checked,
     ghosts: $<HTMLInputElement>('layer-ghosts').checked,
+    values: $<HTMLInputElement>('layer-values').checked,
   };
 }
 
@@ -93,6 +95,7 @@ function frame(now: number): void {
     if (world.metrics.length !== lastMetricsLen) renderMetrics();
     if (world.cadastre.version !== lastCadastreVersion || Math.floor(world.clock.now) !== lastInspectYear) {
       renderLand();
+      renderTown();
       renderInspector();
     }
   }
@@ -152,7 +155,98 @@ const pct = (v: number) => `${Math.round(v * 100)}%`;
 const acres = (m2: number) => `${(m2 / 4047).toFixed(m2 < 4047 * 10 ? 2 : 0)} acres`;
 
 /** Parcels that count as someone's holding (not commons, markets or churchyards). */
-const HELD_KINDS = new Set<Parcel['kind']>(['strip', 'close', 'toft', 'burgage']);
+const HELD_KINDS = new Set<Parcel['kind']>(['strip', 'close', 'toft', 'burgage', 'plot', 'precinct', 'works']);
+
+const PHASE_LABELS: Record<PlotPhase, string> = {
+  institutive: 'house at the front, yard behind',
+  repletive: 'back land filling with buildings',
+  climax: 'back land full',
+  recessive: 'back buildings being cleared',
+};
+
+function renderTown(): void {
+  const t = world.town;
+  const cad = world.cadastre;
+  let plots = 0;
+  let vacant = 0;
+  let courts = 0;
+  const phases: Record<PlotPhase, number> = { institutive: 0, repletive: 0, climax: 0, recessive: 0 };
+  for (const p of cad.parcels.values()) {
+    if (p.kind !== 'burgage' && p.kind !== 'plot') continue;
+    plots++;
+    if (p.takenUp === undefined) vacant++;
+    else if (p.phase) phases[p.phase]++;
+    for (const b of cad.buildingsOn(p.id)) if (b.back && b.use === 'court') courts++;
+  }
+  const market = world.places.some((p) => p.kind === 'market');
+  if (!market) {
+    fill('town', [['Households', '—']]);
+    drawTownChart();
+    return;
+  }
+  fill('town', [
+    ['Households', String(t.households)],
+    ['Could support', String(Math.round(t.capacity))],
+    ['Town plots', String(plots)],
+    ['Empty plots', String(vacant)],
+    ['Cottages in courts', String(courts)],
+    ['Back land filling', String(phases.repletive)],
+    ['Back land full', String(phases.climax)],
+    ['Being cleared', String(phases.recessive)],
+  ]);
+  drawTownChart();
+}
+
+/** Households against capacity over the town's history. */
+function drawTownChart(): void {
+  const canvas = $<HTMLCanvasElement>('town-chart');
+  const r = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  if (canvas.width !== Math.round(r.width * dpr) || canvas.height !== Math.round(r.height * dpr)) {
+    canvas.width = Math.round(r.width * dpr);
+    canvas.height = Math.round(r.height * dpr);
+  }
+  const ctx = canvas.getContext('2d')!;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, r.width, r.height);
+  const h = world.town.history;
+  const css = getComputedStyle(document.documentElement);
+  const ink = css.getPropertyValue('--ink').trim() || '#2b2118';
+  const muted = css.getPropertyValue('--muted').trim() || '#74685a';
+  const line = css.getPropertyValue('--line').trim() || '#ddd3c1';
+  ctx.strokeStyle = line;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, r.height - 12.5);
+  ctx.lineTo(r.width, r.height - 12.5);
+  ctx.stroke();
+  if (h.length < 2) return;
+  const x0 = h[0].year;
+  const x1 = Math.max(h[h.length - 1].year, x0 + 50);
+  const top = Math.max(50, ...h.map((d) => Math.max(d.households, d.capacity)));
+  const x = (year: number) => ((year - x0) / (x1 - x0)) * (r.width - 2) + 1;
+  const y = (v: number) => r.height - 13 - (v / top) * (r.height - 20);
+  const plot = (key: 'households' | 'capacity', colour: string, dash: number[]) => {
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = 2;
+    ctx.setLineDash(dash);
+    ctx.beginPath();
+    h.forEach((d, i) => (i ? ctx.lineTo(x(d.year), y(d[key])) : ctx.moveTo(x(d.year), y(d[key]))));
+    ctx.stroke();
+    ctx.setLineDash([]);
+  };
+  plot('capacity', muted, [4, 3]);
+  plot('households', ink, []);
+  ctx.fillStyle = muted;
+  ctx.font = '11px system-ui, sans-serif';
+  ctx.textBaseline = 'bottom';
+  ctx.textAlign = 'left';
+  ctx.fillText(String(x0), 0, r.height);
+  ctx.textAlign = 'right';
+  ctx.fillText(String(h[h.length - 1].year), r.width, r.height);
+  ctx.textBaseline = 'top';
+  ctx.fillText(String(Math.round(top)), r.width, 0);
+}
 
 const RIGHT_LABELS: Record<Right, string> = {
   access: 'Enter or graze',
@@ -174,6 +268,9 @@ const KIND_LABELS: Record<Parcel['kind'], string> = {
   burgage: 'Burgage plot',
   market: 'Market place',
   churchyard: 'Churchyard',
+  plot: 'Building plot',
+  precinct: 'Precinct',
+  works: 'Works',
 };
 
 function renderLand(): void {
@@ -211,7 +308,12 @@ function renderInspector(): void {
   body.innerHTML = '';
   const furlong = parcel.furlongId !== null ? cad.furlongs.get(parcel.furlongId) : undefined;
   const h3 = document.createElement('h3');
-  h3.textContent = furlong ? `${KIND_LABELS[parcel.kind]} in ${furlong.name}` : KIND_LABELS[parcel.kind];
+  const useName = parcel.use ? world.plugins.technology.uses[parcel.use]?.name : undefined;
+  h3.textContent = furlong
+    ? `${KIND_LABELS[parcel.kind]} in ${furlong.name}`
+    : useName
+      ? `${useName} (${KIND_LABELS[parcel.kind].toLowerCase()})`
+      : KIND_LABELS[parcel.kind];
   const sub = document.createElement('p');
   if (parcel.frontage) h3.textContent += ` on ${parcel.frontage.street}`;
   const bits = [acres(parcel.area)];
@@ -223,9 +325,21 @@ function renderInspector(): void {
   if (furlong) bits.push(`${cad.greatFields[furlong.field]?.name ?? ''}, ${cropIn(furlong.field, world.clock.now)} this year`);
   bits.push(`laid out ${parcel.created}`);
   if (parcel.takenUp !== undefined) bits.push(`taken up ${parcel.takenUp}`);
-  else if (parcel.kind === 'toft' || parcel.kind === 'burgage') bits.push('not yet taken up');
-  const building = [...cad.buildings.values()].find((b) => b.parcelId === parcel.id);
-  if (building) bits.push(world.plugins.technology.uses[building.use]?.name.toLowerCase() ?? building.use);
+  else if (parcel.kind === 'toft' || parcel.kind === 'burgage' || parcel.kind === 'plot') bits.push('empty');
+  const uses = world.plugins.technology.uses;
+  if (parcel.use) bits.push(uses[parcel.use]?.name.toLowerCase() ?? parcel.use);
+  const buildings = cad.buildingsOn(parcel.id);
+  const counts = new Map<string, number>();
+  for (const b of buildings) {
+    const name = uses[b.use]?.name.toLowerCase() ?? b.use;
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  if (counts.size) bits.push([...counts].map(([n, c]) => (c > 1 ? `${c} × ${n}` : n)).join(', '));
+  if (parcel.value !== undefined && parcel.frontage) bits.push(`land value ${Math.round(parcel.value * 100)}`);
+  if (parcel.phase && parcel.takenUp !== undefined) {
+    const built = buildings.reduce((s, b) => s + polygonArea(b.footprint), 0);
+    bits.push(`${PHASE_LABELS[parcel.phase]} (${pct(built / parcel.area)} built over)`);
+  }
   sub.textContent = bits.join(' · ');
   const table = document.createElement('table');
   table.className = 'rights';
@@ -241,9 +355,16 @@ function renderInspector(): void {
     table.append(tr);
   }
   body.append(h3, sub, table);
+  // The plot's lineage: how it came to be what it is.
+  const lineage = cad.history.filter((e) => e.children.includes(parcel.id)).slice(-4);
+  if (lineage.length) {
+    const ul = document.createElement('p');
+    ul.textContent = lineage.map((e) => `${e.year}: ${e.note}`).join(' · ');
+    body.append(ul);
+  }
   const holder = parcel.rights.withdrawal;
   const h = holder !== undefined ? cad.holders.get(holder) : undefined;
-  if (h && (h.kind === 'household' || h.kind === 'lord' || h.kind === 'church')) {
+  if (h && h.kind !== 'community') {
     let n = 0;
     let area = 0;
     const furlongs = new Set<number>();
@@ -266,7 +387,7 @@ view.onClick = (p) => {
   view.selectedParcel = parcel;
   const holder = parcel?.rights.withdrawal;
   const kind = holder !== undefined ? world.cadastre.holders.get(holder)?.kind : undefined;
-  view.selectedHolder = kind === 'household' || kind === 'lord' || kind === 'church' ? holder! : null;
+  view.selectedHolder = kind !== undefined && kind !== 'community' ? holder! : null;
   renderInspector();
   redraw();
 };

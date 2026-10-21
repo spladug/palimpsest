@@ -162,6 +162,34 @@ export function frontBuilding(plot: Shape, f: Frontage, spec: BuildingSpec): { f
   return { footprint, ridge };
 }
 
+/**
+ * Whether a newly cut plot overlaps any already accepted. Plots cut on two
+ * sides of a bending street, or along two ways that meet, can cross; the
+ * first cut keeps the ground.
+ */
+export function overlapsAny(shape: Shape, accepted: readonly CutPlot[]): boolean {
+  const b = shapeBounds(shape);
+  return accepted.some((q) => {
+    const qb = shapeBounds(q.shape);
+    if (qb.maxX < b.minX || b.maxX < qb.minX || qb.maxY < b.minY || b.maxY < qb.minY) return false;
+    return intersection(q.shape, shape).some((x) => shapeArea(x) > 1);
+  });
+}
+
+function shapeBounds(shape: Shape) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of shape[0]) {
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  }
+  return { minX, minY, maxX, maxY };
+}
+
 /** Plot widths as perch multiples (1 perch = 16½ feet ≈ 5.03 m), drawn from weights. */
 export function perchWidths(world: World, weights: Record<number, number>): () => number {
   const perch = 5.03;
@@ -183,4 +211,114 @@ export function clipPolyline(pts: readonly Vec2[], shape: Shape, step = 4): Vec2
   }
   if (cur.length) runs.push(cur);
   return runs.filter((r) => r.length >= 2 && polylineLength(r) > 0);
+}
+
+/** A plot's own frame: along its frontage (u), into it (n), and how far back it reaches. */
+export interface PlotFrame {
+  origin: Vec2;
+  u: Vec2;
+  n: Vec2;
+  width: number;
+  depth: number;
+}
+
+export function plotFrame(plot: Shape, f: Frontage): PlotFrame {
+  const fw = dist(f.a, f.b);
+  const u = { x: (f.b.x - f.a.x) / (fw || 1), y: (f.b.y - f.a.y) / (fw || 1) };
+  let n = { x: -u.y, y: u.x };
+  if (n.x * f.inward.x + n.y * f.inward.y < 0) n = { x: -n.x, y: -n.y };
+  let depth = 0;
+  for (const p of plot[0]) depth = Math.max(depth, (p.x - f.a.x) * n.x + (p.y - f.a.y) * n.y);
+  return { origin: f.a, u, n, width: fw, depth };
+}
+
+/** A rectangle in a plot's frame: `u0..u1` along the frontage, `n0..n1` back from it. */
+export function frameRect(fr: PlotFrame, u0: number, u1: number, n0: number, n1: number): Shape {
+  const at = (du: number, dn: number) => ({
+    x: fr.origin.x + fr.u.x * du + fr.n.x * dn,
+    y: fr.origin.y + fr.u.y * du + fr.n.y * dn,
+  });
+  return [[at(u0, n0), at(u1, n0), at(u1, n1), at(u0, n1)]];
+}
+
+/**
+ * Where the next back-land building goes: a range along one side boundary,
+ * behind whatever already stands, working back from the street (repletion).
+ * Returns null when the back land is full.
+ */
+export function nextBackBuilding(
+  plot: Shape,
+  f: Frontage,
+  existing: Shape[],
+  size: { width: number; depth: number },
+  preferSide: 0 | 1,
+): { footprint: Shape; ridge: [Vec2, Vec2] } | null {
+  const fr = plotFrame(plot, f);
+  const w = Math.min(size.width, fr.width * 0.55);
+  if (w < 3) return null;
+  const gap = 0.4;
+  for (const side of preferSide ? [1, 0] : [0, 1]) {
+    const u0 = side === 0 ? gap : fr.width - gap - w;
+    for (let n0 = 6; n0 + size.depth < fr.depth - 3; n0 += 1.5) {
+      const rect = frameRect(fr, u0, u0 + w, n0, n0 + size.depth);
+      const inside = intersection(rect, plot);
+      const area = inside.reduce((s, x) => s + shapeArea(x), 0);
+      if (area < w * size.depth * 0.9) continue;
+      // Keep clear of what stands, with a narrow passage between.
+      const grown = frameRect(fr, u0 - 0.2, u0 + w + 0.2, n0 - 1, n0 + size.depth + 1);
+      if (existing.some((b) => intersection(grown, b).some((x) => shapeArea(x) > 0.5))) continue;
+      const ridge: [Vec2, Vec2] = [
+        { x: fr.origin.x + fr.u.x * (u0 + w / 2) + fr.n.x * n0, y: fr.origin.y + fr.u.y * (u0 + w / 2) + fr.n.y * n0 },
+        {
+          x: fr.origin.x + fr.u.x * (u0 + w / 2) + fr.n.x * (n0 + size.depth),
+          y: fr.origin.y + fr.u.y * (u0 + w / 2) + fr.n.y * (n0 + size.depth),
+        },
+      ];
+      return { footprint: rect, ridge };
+    }
+  }
+  return null;
+}
+
+/**
+ * Split a plot lengthwise, from the middle of its frontage back along the
+ * direction between its side boundaries. Returns the two halves, or null if
+ * the cut does not divide it cleanly.
+ */
+export function splitLengthwise(plot: Shape, f: Frontage, at = 0.5): { shape: Shape; frontage: Frontage }[] | null {
+  const m = { x: f.a.x + (f.b.x - f.a.x) * at, y: f.a.y + (f.b.y - f.a.y) * at };
+  const fr = plotFrame(plot, f);
+  const L = fr.depth * 3 + fr.width * 3 + 50;
+  const d = f.inward;
+  const dl = Math.hypot(d.x, d.y) || 1;
+  const dir = { x: d.x / dl, y: d.y / dl };
+  // Half-planes either side of the cut line, as big rectangles.
+  const towards = (sign: 1 | -1): Shape => {
+    const s = { x: fr.u.x * sign * L, y: fr.u.y * sign * L };
+    const p0 = { x: m.x - dir.x * L, y: m.y - dir.y * L };
+    const p1 = { x: m.x + dir.x * L, y: m.y + dir.y * L };
+    return [[p0, p1, { x: p1.x + s.x, y: p1.y + s.y }, { x: p0.x + s.x, y: p0.y + s.y }]];
+  };
+  const pick = (parts: Shape[]) => parts.reduce<Shape | null>((a, b) => (!a || shapeArea(b) > shapeArea(a) ? b : a), null);
+  const left = pick(intersection(plot, towards(-1)));
+  const right = pick(intersection(plot, towards(1)));
+  if (!left || !right || shapeArea(left) < 60 || shapeArea(right) < 60) return null;
+  return [
+    { shape: left, frontage: { a: f.a, b: m, inward: f.inward, street: f.street } },
+    { shape: right, frontage: { a: m, b: f.b, inward: f.inward, street: f.street } },
+  ];
+}
+
+/** Two plots side by side on the same street share a front corner. */
+export function frontNeighbours(a: Frontage, b: Frontage): 'a-b' | 'b-a' | null {
+  if (a.street !== b.street) return null;
+  if (dist(a.b, b.a) < 0.5) return 'a-b';
+  if (dist(b.b, a.a) < 0.5) return 'b-a';
+  return null;
+}
+
+/** The frontage of two neighbouring plots joined into one. */
+export function joinFrontages(left: Frontage, right: Frontage): Frontage {
+  const inward = { x: (left.inward.x + right.inward.x) / 2, y: (left.inward.y + right.inward.y) / 2 };
+  return { a: left.a, b: right.b, inward, street: left.street };
 }

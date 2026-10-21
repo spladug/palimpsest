@@ -36,6 +36,10 @@ export interface GraphEdge {
   created: number;
   /** Laid out deliberately (a planned street or lane) and kept up, not just worn by use. */
   planned?: boolean;
+  /** The lowest class a planned way is let fall to (default: track). */
+  floor?: EdgeClass;
+  /** Street name, once it is a named street of the town. */
+  name?: string;
 }
 
 export interface EdgeHit {
@@ -212,6 +216,8 @@ export class StreetGraph {
     e1.yearUse = e2.yearUse = e.yearUse;
     e1.pressure = e2.pressure = e.pressure;
     e1.planned = e2.planned = e.planned;
+    e1.floor = e2.floor = e.floor;
+    e1.name = e2.name = e.name;
     return mid;
   }
 
@@ -249,6 +255,8 @@ export class StreetGraph {
       ne.yearUse = e.yearUse;
       ne.pressure = e.pressure;
       ne.planned = e.planned;
+      ne.floor = e.floor;
+      ne.name = e.name;
     }
     this.adjacency.delete(drop);
     this.nodes.delete(drop);
@@ -264,7 +272,7 @@ export class StreetGraph {
     const [id1, id2] = [...this.edgesAt(nodeId)];
     const e1 = this.edges.get(id1)!;
     const e2 = this.edges.get(id2)!;
-    if (e1.cls !== e2.cls || !!e1.planned !== !!e2.planned) return false;
+    if (e1.cls !== e2.cls || !!e1.planned !== !!e2.planned || e1.floor !== e2.floor || e1.name !== e2.name) return false;
     const start = this.other(e1, nodeId);
     const end = this.other(e2, nodeId);
     if (start === end) return false;
@@ -282,6 +290,8 @@ export class StreetGraph {
     merged.yearUse = yearUse;
     merged.pressure = Math.min(e1.pressure, e2.pressure);
     merged.planned = e1.planned;
+    merged.floor = e1.floor;
+    merged.name = e1.name;
     return true;
   }
 

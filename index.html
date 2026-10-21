@@ -46,6 +46,7 @@
           <legend>Show</legend>
           <label><input type="checkbox" id="layer-fields" checked /> Fields</label>
           <label><input type="checkbox" id="layer-ghosts" /> Old boundaries</label>
+          <label><input type="checkbox" id="layer-values" /> Land value</label>
           <label><input type="checkbox" id="layer-wear" /> Ground wear</label>
           <label><input type="checkbox" id="layer-routes" /> This year's journeys</label>
           <label><input type="checkbox" id="layer-labels" checked /> Names</label>
@@ -54,6 +55,13 @@
         <section id="inspect" hidden>
           <h2>Selected land</h2>
           <div id="inspect-body"></div>
+        </section>
+
+        <section>
+          <h2>Town</h2>
+          <canvas id="town-chart" class="chart" aria-label="Households in the town over time, against what it could support"></canvas>
+          <p class="chart-key"><span class="key-line"></span> households <span class="key-line dashed"></span> could support</p>
+          <dl class="stats" id="town"></dl>
         </section>
 
         <section>

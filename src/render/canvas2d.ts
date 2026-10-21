@@ -13,6 +13,7 @@ export interface Layers {
   labels: boolean;
   fields: boolean;
   ghosts: boolean;
+  values: boolean;
 }
 
 const CROP_COLOUR = {
@@ -42,17 +43,52 @@ interface ParcelPaths {
   vacant: Path2D;
   market: Path2D;
   churchyard: Path2D;
+  precincts: Path2D;
+  works: Path2D;
+  /** Town plots by land-value band, for the values layer. */
+  valueBands: Path2D[];
   buildings: Map<string, Path2D>;
   ridges: Path2D;
 }
 
+const VALUE_BANDS = 6;
+
+/** Thatch and tile in the old town; brick, and Welsh slate on the Victorian terraces. */
 const ROOF_COLOUR: Record<string, string> = {
   cottage: '#a08458',
   townhouse: '#8d5f40',
   shop: '#7f4c34',
+  house: '#94603f',
+  'brick house': '#8b4a3a',
+  shopfront: '#6e4436',
+  terrace: '#5f666e',
+  villa: '#8a4c40',
+  court: '#7a6656',
+  workshop: '#a08a68',
+  warehouse: '#7c6a56',
+  inn: '#7a3e2e',
+  guildhall: '#6d5c48',
+  chapel: '#7b7468',
   church: '#9a9082',
+  friary: '#a29882',
+  range: '#978c7a',
+  hospital: '#9c917e',
+  shed: '#a3957a',
+  tannery: '#7f6b4e',
+  'tenter ground': '#a3957a',
+  'grammar school': '#8f7f6a',
+  brickworks: '#9a5a42',
+  workhouse: '#7f766a',
+  factory: '#6a5a50',
+  gasworks: '#5a5652',
+  gasholder: '#4a4e52',
+  cemetery: '#8a8478',
+  'board school': '#8a6252',
   mill: '#7d7264',
 };
+
+/** A ramp from cheap (pale) to dear (deep red) land. */
+const VALUE_COLOUR = ['#f3e9c6', '#efd49a', '#e7b46e', '#d98b4e', '#c4603a', '#9e3424'];
 
 interface WayStyle {
   width: number;
@@ -165,6 +201,7 @@ export class MapView {
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(this.terrainImage!, 0, 0, W, H);
     if (layers.fields) this.drawFields(world, layers.ghosts);
+    if (layers.values) this.drawValues(world);
     this.drawRivers(world);
     if (layers.wear) {
       this.renderWear(world);
@@ -174,6 +211,7 @@ export class MapView {
     this.drawWays(world);
     this.drawBuildings(world);
     this.drawFords(world);
+    if (layers.labels) this.drawStreetNames(world);
     this.drawPlaces(world, layers.labels);
   }
 
@@ -193,6 +231,9 @@ export class MapView {
       vacant: new Path2D(),
       market: new Path2D(),
       churchyard: new Path2D(),
+      precincts: new Path2D(),
+      works: new Path2D(),
+      valueBands: Array.from({ length: VALUE_BANDS }, () => new Path2D()),
       buildings: new Map(),
       ridges: new Path2D(),
     };
@@ -203,10 +244,16 @@ export class MapView {
       } else if (p.kind === 'close') shapePath(paths.closes, p.shape);
       else if (p.kind === 'meadow') shapePath(paths.meadow, p.shape);
       else if (p.kind === 'toft') shapePath(paths.tofts, p.shape);
-      else if (p.kind === 'burgage') shapePath(p.takenUp === undefined ? paths.vacant : paths.burgages, p.shape);
+      else if (p.kind === 'burgage' || p.kind === 'plot') shapePath(p.takenUp === undefined ? paths.vacant : paths.burgages, p.shape);
       else if (p.kind === 'market') shapePath(paths.market, p.shape);
       else if (p.kind === 'churchyard') shapePath(paths.churchyard, p.shape);
+      else if (p.kind === 'precinct') shapePath(paths.precincts, p.shape);
+      else if (p.kind === 'works') shapePath(paths.works, p.shape);
       else shapePath(paths.common, p.shape);
+      if (p.frontage && p.value !== undefined && (p.kind === 'burgage' || p.kind === 'plot' || p.kind === 'toft')) {
+        const band = Math.min(VALUE_BANDS - 1, Math.floor(Math.sqrt(p.value) * VALUE_BANDS));
+        shapePath(paths.valueBands[band], p.shape);
+      }
     }
     for (const b of cad.buildings.values()) {
       let path = paths.buildings.get(b.use);
@@ -257,6 +304,11 @@ export class MapView {
     ctx.fill(paths.vacant, 'evenodd');
     ctx.fillStyle = 'rgba(150, 175, 130, 0.75)';
     ctx.fill(paths.churchyard, 'evenodd');
+    // Institutions' grounds: lawns and gardens behind a wall; works yards bare.
+    ctx.fillStyle = 'rgba(128, 168, 112, 0.8)';
+    ctx.fill(paths.precincts, 'evenodd');
+    ctx.fillStyle = 'rgba(178, 160, 128, 0.75)';
+    ctx.fill(paths.works, 'evenodd');
     ctx.fillStyle = '#d9ceb4';
     ctx.fill(paths.market, 'evenodd');
     ctx.strokeStyle = 'rgba(70, 52, 34, 0.75)';
@@ -264,6 +316,13 @@ export class MapView {
     ctx.stroke(paths.tofts);
     ctx.stroke(paths.burgages);
     ctx.stroke(paths.churchyard);
+    ctx.strokeStyle = 'rgba(70, 60, 48, 0.9)';
+    ctx.lineWidth = this.px(1.4);
+    ctx.stroke(paths.precincts);
+    ctx.lineWidth = this.px(0.9);
+    ctx.stroke(paths.works);
+    ctx.strokeStyle = 'rgba(70, 52, 34, 0.75)';
+    ctx.lineWidth = this.px(0.7);
     ctx.setLineDash([this.px(2), this.px(2)]);
     ctx.stroke(paths.vacant);
     ctx.setLineDash([]);
@@ -275,6 +334,18 @@ export class MapView {
       ctx.setLineDash([]);
     }
     this.drawSelection(world);
+  }
+
+  /** Town and village plots shaded by land value. */
+  private drawValues(world: World): void {
+    const ctx = this.ctx;
+    const paths = this.parcelPaths(world);
+    paths.valueBands.forEach((path, i) => {
+      ctx.fillStyle = VALUE_COLOUR[i];
+      ctx.globalAlpha = 0.85;
+      ctx.fill(path, 'evenodd');
+    });
+    ctx.globalAlpha = 1;
   }
 
   private drawBuildings(world: World): void {
@@ -299,7 +370,7 @@ export class MapView {
     if (this.selectedHolder !== null) {
       const path = new Path2D();
       for (const p of world.cadastre.parcels.values()) {
-        const held = p.kind === 'strip' || p.kind === 'close' || p.kind === 'toft' || p.kind === 'burgage';
+        const held = p.kind !== 'meadow' && p.kind !== 'common' && p.kind !== 'market' && p.kind !== 'churchyard';
         if (p.rights.withdrawal === this.selectedHolder && held) shapePath(path, p.shape);
       }
       ctx.fillStyle = 'rgba(122, 31, 31, 0.65)';
@@ -394,6 +465,55 @@ export class MapView {
     ctx.setLineDash([]);
   }
 
+  /** Each named street labelled once, along its longest stretch, when zoomed in far enough to read. */
+  private drawStreetNames(world: World): void {
+    if (this.scale < 0.9) return;
+    const ctx = this.ctx;
+    const longest = new Map<string, { pts: Vec2[]; len: number }>();
+    for (const e of world.graph.edges.values()) {
+      if (!e.name) continue;
+      let len = 0;
+      for (let i = 1; i < e.pts.length; i++) len += Math.hypot(e.pts[i].x - e.pts[i - 1].x, e.pts[i].y - e.pts[i - 1].y);
+      const cur = longest.get(e.name);
+      if (!cur || len > cur.len) longest.set(e.name, { pts: e.pts, len });
+    }
+    const size = 10 / this.scale;
+    ctx.save();
+    ctx.font = `italic ${size}px Georgia, serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const [name, { pts, len }] of longest) {
+      const width = ctx.measureText(name).width;
+      if (width > len * 0.9) continue;
+      // The point halfway along, and the direction there, kept upright.
+      let target = len / 2;
+      let at = pts[0];
+      let angle = 0;
+      for (let i = 1; i < pts.length; i++) {
+        const d = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+        if (target <= d || i === pts.length - 1) {
+          const f = d ? Math.min(1, target / d) : 0;
+          at = { x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * f, y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * f };
+          angle = Math.atan2(pts[i].y - pts[i - 1].y, pts[i].x - pts[i - 1].x);
+          break;
+        }
+        target -= d;
+      }
+      if (angle > Math.PI / 2) angle -= Math.PI;
+      if (angle < -Math.PI / 2) angle += Math.PI;
+      ctx.save();
+      ctx.translate(at.x, at.y);
+      ctx.rotate(angle);
+      ctx.lineWidth = 3 / this.scale;
+      ctx.strokeStyle = 'rgba(250, 245, 230, 0.9)';
+      ctx.strokeText(name, 0, 0);
+      ctx.fillStyle = '#3b2c1e';
+      ctx.fillText(name, 0, 0);
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
   private drawFords(world: World): void {
     const ctx = this.ctx;
     for (const f of world.terrain.fords) {
@@ -423,7 +543,7 @@ export class MapView {
       if (p.kind === 'field') continue;
       ctx.save();
       ctx.translate(p.pos.x, p.pos.y);
-      if (p.kind === 'village' || p.kind === 'market' || p.kind === 'mill') {
+      if (p.kind === 'village' || p.kind === 'market' || p.kind === 'mill' || p.kind === 'institution') {
         // Drawn as their buildings and plots.
       } else if (p.kind === 'farmstead') {
         ctx.fillStyle = '#5a3b22';
@@ -468,7 +588,7 @@ export class MapView {
       if (labels) {
         if (p.kind === 'village') this.label(p.name, { x: p.pos.x + 40, y: p.pos.y - 30 }, 14, false, '#2b2118', true);
         else if (p.kind === 'market') this.label('Market', p.pos, 10, true);
-        else if (p.kind === 'church' || p.kind === 'mill') this.label(p.name, p.pos, 10, true);
+        else if (p.kind === 'church' || p.kind === 'mill' || p.kind === 'institution') this.label(p.name, p.pos, 10, true);
         else this.label(p.name, p.pos, p.kind === 'gateway' ? 11 : 10, p.kind === 'gateway');
       }
     }

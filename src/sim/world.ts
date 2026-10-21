@@ -12,10 +12,11 @@ import { Cadastre } from './cadastre';
 import { layOutCloses, rasteriseLandUse } from './fields';
 import { pointInShape, type Shape } from './polygon';
 import { extendVillage, takeUp, vacantPlots } from './town';
+import { newTownState, townYear, updateValues, type TownState } from './dynamics';
 import type { Plugins, Terrain, TripDemand } from '../plugins/types';
 
 /** 'field' places are the gates of furlongs: trip ends, not drawn. */
-export type PlaceKind = 'gateway' | 'farmstead' | 'church' | 'village' | 'field' | 'market' | 'mill';
+export type PlaceKind = 'gateway' | 'farmstead' | 'church' | 'village' | 'field' | 'market' | 'mill' | 'institution';
 
 export interface Place {
   id: number;
@@ -61,6 +62,12 @@ export interface World {
   /** The village's house-plot area, once there is a village, and its typical radius. */
   villageCore: Shape | null;
   villageRadius: number;
+  /** The town's households, capacity, growth pressure and built-up edge. */
+  town: TownState;
+  /** Discounted network distance from the town centre to each graph node. */
+  access: Map<number, number>;
+  /** Year the open fields were enclosed, if they have been. */
+  enclosed: number | null;
 }
 
 /** Sampled walker routes per year; each stands for many real trips. */
@@ -105,6 +112,9 @@ export function createWorld(seed: string, plugins: Plugins, startYear = 900): Wo
     deserted: [],
     villageCore: null,
     villageRadius: 0,
+    town: newTownState(),
+    access: new Map(),
+    enclosed: null,
   };
   world.cadastre.lord = world.cadastre.addHolder('lord', 'the lord').id;
   world.cadastre.community = world.cadastre.addHolder('community', 'the township').id;
@@ -120,6 +130,23 @@ export function createWorld(seed: string, plugins: Plugins, startYear = 900): Wo
   world.clock.addProcess({ name: 'movement', interval: 1, run: (w) => walk(w) }, startYear + 1);
   world.clock.addProcess({ name: 'hierarchy', interval: 1, run: (w, now) => updateHierarchy(w, now) }, startYear + 1);
   world.clock.addProcess({ name: 'settlement', interval: 1, run: (w, now) => settle(w, now) }, startYear + 1);
+  world.clock.addProcess({ name: 'values', interval: 5, run: (w) => updateValues(w) }, startYear + 1);
+  let landVersion = -1;
+  world.clock.addProcess(
+    {
+      name: 'town',
+      interval: 1,
+      run: (w, now) => {
+        townYear(w, now);
+        // Walkers keep to the streets once plots and buildings are in the way.
+        if (Math.round(now) % 2 === 0 && w.cadastre.version !== landVersion) {
+          updateLandUse(w);
+          landVersion = w.cadastre.version;
+        }
+      },
+    },
+    startYear + 1,
+  );
   world.clock.addProcess(
     { name: 'metrics', interval: 5, run: (w, now) => w.metrics.push({ year: now, metrics: computeMetrics(w) }) },
     startYear + 5,
@@ -188,9 +215,42 @@ function travel(world: World, trip: TripDemand, weight: number): boolean {
   insertRoute(world.graph, route, weight, placeNode(world, trip.from), placeNode(world, trip.to), {
     ...DEFAULT_INSERT,
     year: world.clock.now,
+    // A path worn across a yard is one thing; a way through a house is not.
+    allowed: (pts) => !crossesBuilding(world, pts),
   });
   world.recentRoutes.push(route);
   return true;
+}
+
+/** Buildings by 20 m bucket, rebuilt when the cadastre changes. */
+let buildingIndex: { world: World; version: number; buckets: Map<number, Shape[]> } | null = null;
+const BUCKET = 20;
+
+/** Whether a line passes through any building. */
+export function crossesBuilding(world: World, pts: readonly Vec2[]): boolean {
+  const cad = world.cadastre;
+  if (!buildingIndex || buildingIndex.world !== world || buildingIndex.version !== cad.version) {
+    const buckets = new Map<number, Shape[]>();
+    for (const b of cad.buildings.values()) {
+      const bb = b.footprint[0];
+      const xs = bb.map((p) => p.x);
+      const ys = bb.map((p) => p.y);
+      for (let by = Math.floor(Math.min(...ys) / BUCKET); by <= Math.floor(Math.max(...ys) / BUCKET); by++) {
+        for (let bx = Math.floor(Math.min(...xs) / BUCKET); bx <= Math.floor(Math.max(...xs) / BUCKET); bx++) {
+          const k = by * 4096 + bx;
+          let list = buckets.get(k);
+          if (!list) buckets.set(k, (list = []));
+          list.push(b.footprint);
+        }
+      }
+    }
+    buildingIndex = { world, version: cad.version, buckets };
+  }
+  for (const p of resample(pts, 1.5)) {
+    const list = buildingIndex.buckets.get(Math.floor(p.y / BUCKET) * 4096 + Math.floor(p.x / BUCKET));
+    if (list?.some((f) => pointInShape(p, f))) return true;
+  }
+  return false;
 }
 
 /** Returns the cells whose wear changed. */
@@ -266,7 +326,8 @@ function updateHierarchy(world: World, now: number, immediate = false): void {
       e.pressure = Math.min(-1, e.pressure - 1);
       if (e.pressure <= -patience) {
         // Planned ways are kept up: back lanes may decline to a track, town streets no lower than a lane.
-        if (e.planned && level <= 1) e.pressure = 0;
+        const floor = e.planned ? EDGE_CLASSES.indexOf(e.floor ?? 'track') : -1;
+        if (level <= floor) e.pressure = 0;
         else if (level === 0) g.removeEdge(e.id);
         else e.cls = EDGE_CLASSES[level - 1];
         e.pressure = 0;
@@ -442,34 +503,6 @@ function settle(world: World, now: number): void {
       world.log.push({ year: Math.round(now), text: `${village.name} now has ${Math.round(village.mass)} households.` });
     }
   }
-
-  // Burgesses take up vacant plots nearest the market first: frontage there is worth most.
-  const market = world.places.find((p) => p.kind === 'market');
-  if (market) {
-    const rate = world.plugins.demand.newBurgessRate(world);
-    let n = Math.floor(rate);
-    if (world.rng.chance(rate - n)) n++;
-    for (let k = 0; k < n; k++) {
-      const plot = vacantPlots(world, 'burgage', market.pos)[0];
-      if (!plot) break;
-      const name = world.plugins.demand.burgessName(world);
-      const h = world.cadastre.addHolder('household', name, market.id);
-      // Plots fronting the market place get shops below the house.
-      const f = plot.frontage!;
-      const front = { x: (f.a.x + f.b.x) / 2, y: (f.a.y + f.b.y) / 2 };
-      const onMarket = dist(front, market.pos) < world.plugins.technology.plots.marketLength * 0.6 + 15;
-      takeUp(world, plot, h.id, onMarket ? 'shop' : 'townhouse');
-      market.mass += 0.3;
-      const burgesses = countBurgesses(world);
-      if (burgesses % 10 === 0) world.log.push({ year: Math.round(now), text: `${burgesses} burgage plots are now taken up.` });
-    }
-  }
-}
-
-function countBurgesses(world: World): number {
-  let n = 0;
-  for (const p of world.cadastre.parcels.values()) if (p.kind === 'burgage' && p.takenUp !== undefined) n++;
-  return n;
 }
 
 const FARM_NAMES = [

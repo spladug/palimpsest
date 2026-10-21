@@ -7,7 +7,7 @@ import type { Rng } from '../sim/rng';
 import type { SimEvent } from '../sim/clock';
 import type { World, Place, PlaceKind } from '../sim/world';
 import type { EdgeClass } from '../sim/graph';
-import type { Cadastre, ParcelKind, Regime } from '../sim/cadastre';
+import type { Cadastre, HolderKind, Parcel, ParcelKind, Regime } from '../sim/cadastre';
 import type { BuildingSpec } from '../sim/plots';
 
 export interface Terrain {
@@ -111,13 +111,76 @@ export interface PlotRules {
   boroughLength: number;
   marketLength: number;
   marketWidth: number;
+  /** How new town plots are laid out in a given year, when the town outgrows the plots it has. */
+  townPlots(year: number): TownPlotRules;
+  /** Narrowest frontage a plot may be split down to, in metres. */
+  minFrontage: number;
+  /** Built coverage at which a plot's back land is full (the burgage cycle's climax). */
+  climaxCoverage: number;
+  /**
+   * Back-land buildings by year: `work` (workshops, stables, warehouses) as a
+   * plot fills; `housing` (courts of cottages) when the town is short of houses.
+   */
+  backland(year: number): { work: string; housing: string | null };
+  /** The front building put up when a plot is rebuilt in a given year. */
+  rebuild(year: number, onMarket: boolean): string;
 }
 
-/** A kind of building and what it needs (the start of the land-use catalogue). */
+export interface TownPlotRules {
+  kind: ParcelKind;
+  /** Frontage widths in perches, with weights. */
+  widths: Record<number, number>;
+  depth: number;
+  /** The house put up on each plot. */
+  use: string;
+  /** 'speculative': a builder puts up every house at once and lets them; otherwise each taker builds. */
+  building: 'on take-up' | 'speculative';
+  /** Whole fields are laid out with new streets (Ward 1962), rather than plots along existing ways. */
+  wholeFields: boolean;
+}
+
+/** What a land use needs of its site. */
+export interface SiteNeeds {
+  /** Within this distance of the river (a tannery, a gasworks, a wharf). */
+  water?: number;
+  /** On the market place. */
+  market?: boolean;
+  /** Steepest mean slope it can be built on. */
+  maxSlope?: number;
+}
+
+/**
+ * A land use from the catalogue: a kind of building, what it needs of its
+ * site, and how much it will bid for land of a given accessibility.
+ */
 export interface UseType {
   name: string;
   building: BuildingSpec;
   storeys: number;
+  /** Households living in it. */
+  dwellings?: number;
+  /**
+   * 'plot': takes over a town plot's front building (an inn, a chapel).
+   * 'land': takes a parcel of its own of `area` m² (a friary, a brickworks).
+   */
+  site?: 'plot' | 'land';
+  area?: number;
+  /** The kind of parcel a 'land' use takes, and who holds it. */
+  parcel?: ParcelKind;
+  holder?: HolderKind;
+  needs?: SiteNeeds;
+  /** Bid for a site of a given accessibility, 0..1 (bid-rent). */
+  bid?: (access: number) => number;
+  /** Distance within which it is a nuisance to houses. */
+  nuisance?: number;
+  /** How hard it is to move once established, 0..1. */
+  relocation?: number;
+  /** Trips per year it draws, as a destination. */
+  trips?: number;
+  /** Who holds a 'land' use's ground, by name. */
+  holderName?: string;
+  /** Extra buildings on a 'land' site, beside the main one (relative positions in metres). */
+  extra?: { use: string; at: [number, number]; size: [number, number] }[];
 }
 
 export interface TechnologyPlugin {
@@ -147,6 +210,11 @@ export interface TenurePlugin {
   inheritance: 'partible' | 'impartible';
   /** The regime and rights bundle for a new parcel of a kind, occupied by a holder. */
   rights(kind: ParcelKind, occupant: number, cadastre: Cadastre): { regime: Regime; rights: Partial<Record<Right, number>> };
+  /**
+   * How readily a parcel's land can be had for building, 0..1: whoever holds
+   * its alienation right must be willing to sell. Institutions rarely sell.
+   */
+  willingToSell(parcel: Parcel, cadastre: Cadastre, year: number): number;
 }
 
 export interface TripDemand {
@@ -164,10 +232,21 @@ export interface DemandPlugin {
   newFarmsteadRate(world: World): number;
   /** Expected number of new households in villages this year. */
   newHouseholdRate(world: World): number;
-  /** Expected number of burgesses taking up town plots this year. */
-  newBurgessRate(world: World): number;
   /** A name for a newcomer to the town. */
   burgessName(world: World): string;
+  /** A given name for an heir. */
+  heirName(world: World): string;
+  /**
+   * Households the town can support this year: its trade, its hinterland and
+   * later its industry. The town grows toward this and shrinks when it falls.
+   */
+  townCapacity(world: World): number;
+  /** How many of each land use the settlement needs now. */
+  usesNeeded(world: World, households: number): Record<string, number>;
+  /** A name for a builder who buys a field to lay out. */
+  builderName?(world: World): string;
+  /** A name for a new street; `toward` is the name of where an old way leads, if any. */
+  streetName(world: World, toward: string | null, wholeField: boolean): string;
   /** Scenario events to schedule at the start. */
   events(world: World): SimEvent<World>[];
 }

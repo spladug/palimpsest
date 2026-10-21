@@ -190,5 +190,24 @@ stretch goal.
 4. **US railroad scenario.**
 5. **3D view.**
 6. **Town dynamics** — burgage cycle, full land-use catalogue, fringe belts,
-   inheritance.
+   inheritance. *Done:* the demand plugin sets how many households the town
+   can support each year (growth to c. 1300, the Black Death and a long
+   slump, slow recovery, a pause before industry, the industrial boom); the
+   town grows or shrinks toward it (`src/sim/dynamics.ts`). Householders die
+   and plots pass to heirs (split among them where inheritance is partible),
+   fall vacant or are sold; burgesses sell off half-plots; neighbours buy
+   empty plots and merge them. Each plot runs the burgage cycle — workshops
+   and later courts of cottages fill the back land to a climax, decline
+   clears it, and old fronts are rebuilt in the style of the day — with
+   neighbouring plots raising each other's odds. When the plots run out, new
+   ones are laid out along the ways leaving the town; after enclosure
+   (c. 1760–1820, a regime-change event, `src/sim/enclosure.ts`) builders buy
+   whole fields next to the town and lay streets along their length with
+   terraced, later villa, plots (`src/sim/expansion.ts`). Land value comes from
+   network accessibility to the market (`src/sim/landvalue.ts`). Land uses bid
+   for sites (`src/sim/landuse.ts`): inns and chapels take over plots;
+   friaries, tanneries, workhouses, gasworks and cemeteries take cheap ground
+   at the edge, mostly in growth pauses, and their holders rarely sell, so
+   later growth jumps over them. Engulfed noisome trades move out. Walkers
+   keep to the streets once plots and buildings are in the way.
 7. **Offline reference pipeline** and fuller validation.

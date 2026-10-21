@@ -23,6 +23,8 @@ export interface InsertOptions {
   year: number;
   /** A planned way: add it even where the network already offers a similar route. */
   planned?: boolean;
+  /** Whether a new way may be made along this line (it must not run through a building, say). */
+  allowed?: (pts: readonly Vec2[]) => boolean;
 }
 
 export const DEFAULT_INSERT: Omit<InsertOptions, 'year'> = {
@@ -128,6 +130,7 @@ export function insertRoute(
     // Skip ways the network already makes nearly redundant.
     const len = polylineLength(geom);
     if (!opts.planned && graph.networkDistance(a, b, len * REDUNDANT_DETOUR) <= len * REDUNDANT_DETOUR) return b;
+    if (opts.allowed && !opts.allowed(geom)) return b;
     const e = graph.addEdge(a, b, geom, 'path', 0, opts.year);
     e.yearUse = weight;
     e.planned = opts.planned;

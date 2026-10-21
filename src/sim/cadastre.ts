@@ -15,12 +15,18 @@ export type ParcelKind =
   /** A town plot held by burgage tenure. */
   | 'burgage'
   | 'market'
-  | 'churchyard';
+  | 'churchyard'
+  /** A freehold building plot, laid out after the medieval borough. */
+  | 'plot'
+  /** The grounds of an institution: a friary, school, workhouse or cemetery. */
+  | 'precinct'
+  /** Ground taken by a land-hungry trade or industry: tenter ground, tannery, brickworks. */
+  | 'works';
 
 /** How a parcel is held overall; the detail is in its rights. */
 export type Regime = 'private' | 'use-right' | 'common';
 
-export type HolderKind = 'household' | 'community' | 'lord' | 'church';
+export type HolderKind = 'household' | 'community' | 'lord' | 'church' | 'borough' | 'company' | 'gentry';
 
 export interface Holder {
   id: number;
@@ -28,7 +34,17 @@ export interface Holder {
   name: string;
   /** Where a household lives (a place id). */
   placeId: number | null;
+  /** Family name, carried by heirs. */
+  surname?: string;
 }
+
+/**
+ * Conzen's burgage cycle: a plot is laid out with a house at the front
+ * (institutive), its back land fills with buildings (repletive) until it can
+ * take no more (climax), then buildings are cleared (recessive) before the
+ * plot is redeveloped.
+ */
+export type PlotPhase = 'institutive' | 'repletive' | 'climax' | 'recessive';
 
 /** The street edge of a plot: its two front corners, and the direction into the plot. */
 export interface Frontage {
@@ -44,6 +60,12 @@ export interface Parcel {
   frontage?: Frontage;
   /** Year the current holder took it up, for plots. */
   takenUp?: number;
+  /** Where a town plot is in the burgage cycle. */
+  phase?: PlotPhase;
+  /** Land value, 0..1, from accessibility over the street graph. */
+  value?: number;
+  /** The land use a precinct or works ground was taken for. */
+  use?: string;
   shape: Shape;
   bounds: Bounds;
   area: number;
@@ -65,6 +87,8 @@ export interface Building {
   ridge: [Vec2, Vec2];
   storeys: number;
   built: number;
+  /** Built on the back land of a plot rather than its street front. */
+  back?: boolean;
 }
 
 export interface Furlong {
@@ -83,7 +107,7 @@ export interface GreatField {
 
 export interface ParcelEvent {
   year: number;
-  kind: 'create' | 'retire' | 'split' | 'merge' | 'reallocate';
+  kind: 'create' | 'retire' | 'split' | 'merge' | 'reallocate' | 'inherit' | 'sale';
   parents: number[];
   children: number[];
   note: string;
@@ -94,6 +118,8 @@ export class Cadastre {
   readonly holders = new Map<number, Holder>();
   readonly furlongs = new Map<number, Furlong>();
   readonly buildings = new Map<number, Building>();
+  /** Buildings by the parcel they stand on. */
+  private byParcel = new Map<number, Set<number>>();
   greatFields: GreatField[] = [];
   readonly history: ParcelEvent[] = [];
   /** Boundaries of retired parcels, which later divisions may follow. */
@@ -146,17 +172,99 @@ export class Cadastre {
   addBuilding(b: Omit<Building, 'id'>): Building {
     const building = { ...b, id: this.nextId++ };
     this.buildings.set(building.id, building);
+    if (building.parcelId !== null) {
+      let set = this.byParcel.get(building.parcelId);
+      if (!set) this.byParcel.set(building.parcelId, (set = new Set()));
+      set.add(building.id);
+    }
     this.version++;
     return building;
   }
 
+  removeBuilding(id: number): void {
+    const b = this.buildings.get(id);
+    if (!b) return;
+    this.buildings.delete(id);
+    if (b.parcelId !== null) this.byParcel.get(b.parcelId)?.delete(id);
+    this.version++;
+  }
+
+  /** The buildings standing on a parcel. */
+  buildingsOn(parcelId: number): Building[] {
+    const ids = this.byParcel.get(parcelId);
+    return ids ? [...ids].map((id) => this.buildings.get(id)!) : [];
+  }
+
+  /** Move a building onto another parcel (when plots are split or merged). */
+  moveBuilding(b: Building, parcelId: number): void {
+    if (b.parcelId !== null) this.byParcel.get(b.parcelId)?.delete(b.id);
+    b.parcelId = parcelId;
+    let set = this.byParcel.get(parcelId);
+    if (!set) this.byParcel.set(parcelId, (set = new Set()));
+    set.add(b.id);
+  }
+
   /** Give a parcel a new rights bundle (it changes hands). */
-  regrant(parcel: Parcel, rights: Partial<Record<Right, number>>, regime: Regime, year: number, note: string): void {
+  regrant(
+    parcel: Parcel,
+    rights: Partial<Record<Right, number>>,
+    regime: Regime,
+    year: number,
+    note: string,
+    kind: 'reallocate' | 'inherit' | 'sale' = 'reallocate',
+  ): void {
     parcel.rights = rights;
     parcel.regime = regime;
     parcel.takenUp = year;
     this.version++;
+    this.history.push({ year, kind, parents: [parcel.id], children: [parcel.id], note });
+  }
+
+  /** The plot falls vacant: rights go back to whoever grants them, here the given holder. */
+  vacate(parcel: Parcel, rights: Partial<Record<Right, number>>, regime: Regime, year: number, note: string): void {
+    parcel.rights = rights;
+    parcel.regime = regime;
+    parcel.takenUp = undefined;
+    this.version++;
     this.history.push({ year, kind: 'reallocate', parents: [parcel.id], children: [parcel.id], note });
+  }
+
+  /**
+   * Replace a parcel by several (a split) or several by one (a merge). The old
+   * parcels are retired with their boundaries kept as ghosts; their buildings
+   * move to whichever new parcel holds their centre.
+   */
+  replace(
+    oldIds: number[],
+    parts: { shape: Shape; frontage?: Frontage }[],
+    year: number,
+    kind: 'split' | 'merge',
+    note: string,
+  ): Parcel[] {
+    const first = this.parcels.get(oldIds[0])!;
+    const children = parts.map((part) => {
+      const p = this.addParcel(first.kind, part.shape, first.regime, { ...first.rights }, year, first.furlongId);
+      p.frontage = part.frontage;
+      p.takenUp = first.takenUp;
+      p.phase = first.phase;
+      p.value = first.value;
+      return p;
+    });
+    for (const id of oldIds) {
+      for (const b of this.buildingsOn(id)) {
+        const c = centreOf(b.footprint);
+        const home = children.find((p) => pointInShape(c, p.shape)) ?? children[0];
+        this.moveBuilding(b, home.id);
+      }
+      const p = this.parcels.get(id);
+      if (!p) continue;
+      p.retired = year;
+      this.ghosts.push(p.shape);
+      this.parcels.delete(id);
+    }
+    this.version++;
+    this.history.push({ year, kind, parents: oldIds, children: children.map((c) => c.id), note });
+    return children;
   }
 
   /** Retire parcels, keeping their boundaries as ghosts. */
@@ -167,7 +275,7 @@ export class Cadastre {
       p.retired = year;
       this.ghosts.push(p.shape);
       this.parcels.delete(id);
-      for (const b of this.buildings.values()) if (b.parcelId === id) this.buildings.delete(b.id);
+      for (const b of this.buildingsOn(id)) this.removeBuilding(b.id);
     }
     this.version++;
     this.history.push({ year, kind: children.length ? 'reallocate' : 'retire', parents: ids, children, note });
@@ -190,6 +298,16 @@ export class Cadastre {
     if (id === undefined) return 'nobody';
     return this.holders.get(id)?.name ?? 'unknown';
   }
+}
+
+function centreOf(shape: Shape): Vec2 {
+  let x = 0;
+  let y = 0;
+  for (const p of shape[0]) {
+    x += p.x;
+    y += p.y;
+  }
+  return { x: x / shape[0].length, y: y / shape[0].length };
 }
 
 /** What is growing in a great field this year, in a three-course rotation. */

@@ -377,6 +377,8 @@ export function rasteriseLandUse(world: World): void {
     if (p.kind === 'close') paint(p.shape, (q) => (distanceToBoundary(q, p.shape) < rules.headland ? 0.9 : rules.closeFactor));
     else if (p.kind === 'meadow') paint(p.shape, () => rules.meadowFactor);
     // House plots are private: people go round by the street or the back lane.
-    else if (p.kind === 'toft' || p.kind === 'burgage' || p.kind === 'churchyard') paint(p.shape, () => rules.plotFactor);
+    else if (p.kind !== 'strip' && p.kind !== 'common' && p.kind !== 'market') paint(p.shape, () => rules.plotFactor);
   }
+  // Nobody walks through a house: buildings are all but impassable.
+  for (const b of world.cadastre.buildings.values()) paint(b.footprint, () => 0.04);
 }

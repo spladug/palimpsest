@@ -16,18 +16,18 @@ import {
   union,
   type Shape,
 } from './polygon';
-import { clipPolyline, cutFrontage, frontBuilding, perchWidths, type CutPlot } from './plots';
+import { clipPolyline, cutFrontage, frontBuilding, overlapsAny, perchWidths, type CutPlot } from './plots';
 import type { Parcel, ParcelKind } from './cadastre';
 import type { EdgeClass, GraphEdge } from './graph';
 import { insertRoute, DEFAULT_INSERT } from './insert';
-import type { Place, World } from './world';
+import { crossesBuilding, type Place, type World } from './world';
 import type { Rng } from './rng';
 import { wobblyOutline } from './fields';
 
-const WAY_HALF_WIDTH: Record<EdgeClass, number> = { path: 2, track: 3, lane: 4, road: 5 };
+export const WAY_HALF_WIDTH: Record<EdgeClass, number> = { path: 2, track: 3, lane: 4, road: 5 };
 
 /** Corridors of ways (and the river) near an area, which plots must keep clear of. */
-function wayBuffers(world: World, near: Shape, except: Set<number> = new Set()): Shape[] {
+export function wayBuffers(world: World, near: Shape, except: Set<number> = new Set()): Shape[] {
   const b = bounds(near);
   const pad = 20;
   const touches = (pts: readonly Vec2[]) =>
@@ -42,12 +42,12 @@ function wayBuffers(world: World, near: Shape, except: Set<number> = new Set()):
   return out.filter((s) => s.length && s[0].length >= 3);
 }
 
-function mapShape(world: World): Shape {
+export function mapShape(world: World): Shape {
   const h = world.terrain.height;
   return rectangle({ minX: 2, minY: 2, maxX: h.worldWidth - 2, maxY: h.worldHeight - 2 });
 }
 
-function addPlot(world: World, kind: ParcelKind, plot: CutPlot): Parcel {
+export function addPlot(world: World, kind: ParcelKind, plot: CutPlot): Parcel {
   const lord = world.cadastre.lord!;
   const { regime, rights } = world.plugins.tenure.rights(kind, lord, world.cadastre);
   const p = world.cadastre.addParcel(kind, plot.shape, regime, rights, Math.round(world.clock.now));
@@ -106,7 +106,8 @@ function centroidOf(shape: Shape): Vec2 {
  */
 export function layOutTofts(world: World, core: Shape, church: Vec2, households: number[]): number {
   const rules = world.plugins.technology.plots;
-  const taken = [...world.cadastre.parcels.values()].filter((p) => p.kind === 'churchyard').map((p) => p.shape);
+  // Anything already held there (the churchyard, the closes of a farm that stayed) is kept clear.
+  const taken = [...world.cadastre.parcels.values()].filter((p) => p.kind !== 'strip').map((p) => p.shape);
   const land = differenceMany(core, [...wayBuffers(world, core), ...taken]);
   const width = perchWidths(world, rules.toftWidths);
   const cut = plotsAlongWays(world, core, land, rules.toftDepth, width, 'the village street');
@@ -122,7 +123,7 @@ export function layOutTofts(world: World, core: Shape, church: Vec2, households:
   return parcels.length;
 }
 
-function mid(p: Parcel): Vec2 {
+export function mid(p: Parcel): Vec2 {
   const f = p.frontage!;
   return { x: (f.a.x + f.b.x) / 2, y: (f.a.y + f.b.y) / 2 };
 }
@@ -133,28 +134,54 @@ function mid(p: Parcel): Vec2 {
  * for slivers along the plot edges.
  */
 function plotsFromStrips(world: World, plots: CutPlot[], kind: ParcelKind, note: string): Parcel[] {
-  const cad = world.cadastre;
-  const year = Math.round(world.clock.now);
-  const plotShapes = plots.map((p) => p.shape);
-  const consumed: number[] = [];
-  const trimmed: number[] = [];
-  for (const parcel of [...cad.parcels.values()]) {
-    if (parcel.kind !== 'strip') continue;
-    const overlap = plotShapes.some((s) => intersection(s, parcel.shape).some((x) => shapeArea(x) > 1));
-    if (!overlap) continue;
-    const rest = differenceMany(parcel.shape, plotShapes).filter(
-      (x) => shapeArea(x) > world.plugins.technology.fields.minStripArea && thickness(x) > 5,
-    );
-    consumed.push(parcel.id);
-    for (const part of rest) trimmed.push(cad.addParcel('strip', part, parcel.regime, { ...parcel.rights }, year, parcel.furlongId).id);
-  }
+  return plotsFromLand(world, plots, kind, note, new Set(['strip']));
+}
+
+/**
+ * Turn cut plots into parcels, taking the land from whatever parcels of the
+ * given kinds lie beneath. What is left of each is kept, except slivers.
+ */
+export function plotsFromLand(world: World, plots: CutPlot[], kind: ParcelKind, note: string, from: Set<ParcelKind>): Parcel[] {
+  const trimmed = takeLand(world, plots.map((p) => p.shape), from);
   const parcels = plots.map((p) => addPlot(world, kind, p));
-  cad.retire(consumed, year, note, [...parcels.map((p) => p.id), ...trimmed]);
+  const year = Math.round(world.clock.now);
+  world.cadastre.retire(trimmed.consumed, year, note, [...parcels.map((p) => p.id), ...trimmed.rest]);
   return parcels;
 }
 
+/**
+ * Cut shapes out of the parcels of the given kinds beneath them. Returns the
+ * parcels to retire and the remainders added in their place (not yet retired,
+ * so the caller can record one history event).
+ */
+export function takeLand(world: World, shapes: Shape[], from: Set<ParcelKind>): { consumed: number[]; rest: number[] } {
+  const cad = world.cadastre;
+  const year = Math.round(world.clock.now);
+  const consumed: number[] = [];
+  const rest: number[] = [];
+  const b = shapes.map(bounds);
+  for (const parcel of [...cad.parcels.values()]) {
+    if (!from.has(parcel.kind)) continue;
+    const pb = parcel.bounds;
+    const near = b.filter((x) => x.minX <= pb.maxX && pb.minX <= x.maxX && x.minY <= pb.maxY && pb.minY <= x.maxY);
+    if (!near.length) continue;
+    const overlap = shapes.some((s) => intersection(s, parcel.shape).some((x) => shapeArea(x) > 1));
+    if (!overlap) continue;
+    const minArea = parcel.kind === 'strip' ? world.plugins.technology.fields.minStripArea : 300;
+    const parts = differenceMany(parcel.shape, shapes).filter((x) => shapeArea(x) > minArea && thickness(x) > 5);
+    consumed.push(parcel.id);
+    for (const part of parts) {
+      const p = cad.addParcel(parcel.kind, part, parcel.regime, { ...parcel.rights }, year, parcel.furlongId);
+      p.use = parcel.use;
+      p.takenUp = parcel.takenUp;
+      rest.push(p.id);
+    }
+  }
+  return { consumed, rest };
+}
+
 /** Land plots may be cut from near an area: anything but ways, the river and parcels of the kinds given. */
-function plotLand(world: World, area: Shape, keep: Set<ParcelKind>, exceptEdges: Set<number> = new Set()): Shape[] {
+export function plotLand(world: World, area: Shape, keep: Set<ParcelKind>, exceptEdges: Set<number> = new Set()): Shape[] {
   const blocked = [
     ...wayBuffers(world, area, exceptEdges),
     ...[...world.cadastre.parcels.values()].filter((p) => keep.has(p.kind)).map((p) => p.shape),
@@ -163,7 +190,7 @@ function plotLand(world: World, area: Shape, keep: Set<ParcelKind>, exceptEdges:
 }
 
 /** Plots cut along every way through an area, both sides, skipping overlaps where ways meet. */
-function plotsAlongWays(world: World, area: Shape, land: Shape[], depth: number, width: () => number, street: string): CutPlot[] {
+export function plotsAlongWays(world: World, area: Shape, land: Shape[], depth: number, width: () => number, street: string): CutPlot[] {
   const cut: CutPlot[] = [];
   for (const e of world.graph.edges.values()) {
     for (const run of clipPolyline(e.pts, area)) {
@@ -171,7 +198,7 @@ function plotsAlongWays(world: World, area: Shape, land: Shape[], depth: number,
       for (const side of [1, -1] as const) {
         const plots = cutFrontage(run, side, { offset: () => WAY_HALF_WIDTH[e.cls] + 1, depth, width, land, street });
         for (const p of plots) {
-          if (cut.some((q) => intersection(q.shape, p.shape).some((x) => shapeArea(x) > 20))) continue;
+          if (overlapsAny(p.shape, cut)) continue;
           cut.push(p);
         }
       }
@@ -191,7 +218,7 @@ export function extendVillage(world: World, centre: Vec2, rng: Rng): number {
   world.villageRadius += rules.villageGrowth;
   const outline = wobblyOutline(rng, centre, world.villageRadius, 0.15);
   const ring = differenceMany(outline, [core]);
-  const keep = new Set<ParcelKind>(['toft', 'burgage', 'market', 'churchyard', 'close', 'meadow', 'common']);
+  const keep = new Set<ParcelKind>(['toft', 'burgage', 'plot', 'precinct', 'works', 'market', 'churchyard', 'close', 'meadow', 'common']);
   const width = perchWidths(world, rules.toftWidths);
   const cut: CutPlot[] = [];
   for (const part of ring) {
@@ -212,17 +239,27 @@ export function takeUp(world: World, plot: Parcel, holder: number, use: string):
   const { regime, rights } = world.plugins.tenure.rights(plot.kind, holder, world.cadastre);
   const year = Math.round(world.clock.now);
   world.cadastre.regrant(plot, rights, regime, year, `${world.cadastre.holderName(holder)} takes up a ${plot.kind}`);
+  plot.phase = 'institutive';
+  // A builder may already have put the house up.
+  if (world.cadastre.buildingsOn(plot.id).some((b) => !b.back)) return;
+  putUpFront(world, plot, use);
+}
+
+/** Put up a plot's front building for a use. */
+export function putUpFront(world: World, plot: Parcel, use: string): boolean {
   const type = world.plugins.technology.uses[use];
-  if (!type || !plot.frontage) return;
+  if (!type || !plot.frontage) return false;
   const b = frontBuilding(plot.shape, plot.frontage, type.building);
-  if (b) world.cadastre.addBuilding({ parcelId: plot.id, use, footprint: b.footprint, ridge: b.ridge, storeys: type.storeys, built: year });
+  if (!b) return false;
+  const year = Math.round(world.clock.now);
+  world.cadastre.addBuilding({ parcelId: plot.id, use, footprint: b.footprint, ridge: b.ridge, storeys: type.storeys, built: year });
+  return true;
 }
 
 /** Vacant plots of a kind, nearest a point first. */
 export function vacantPlots(world: World, kind: ParcelKind, near: Vec2): Parcel[] {
-  const lord = world.cadastre.lord;
   return [...world.cadastre.parcels.values()]
-    .filter((p) => p.kind === kind && p.takenUp === undefined && p.rights.withdrawal === lord)
+    .filter((p) => p.kind === kind && p.takenUp === undefined && p.frontage)
     .sort((a, b) => dist(mid(a), near) - dist(mid(b), near));
 }
 
@@ -238,7 +275,7 @@ export interface Borough {
  * Follow the busiest ways outward from where a road leaves the village, to
  * get the line of the new town street.
  */
-function streetFrom(world: World, start: GraphEdge, fromNode: number, length: number): { pts: Vec2[]; edges: number[] } {
+export function streetFrom(world: World, start: GraphEdge, fromNode: number, length: number): { pts: Vec2[]; edges: number[] } {
   const g = world.graph;
   const pts: Vec2[] = [];
   const edges: number[] = [];
@@ -266,14 +303,14 @@ function streetFrom(world: World, start: GraphEdge, fromNode: number, length: nu
   return { pts: trimTo(pts, length), edges };
 }
 
-function direction(pts: Vec2[]): Vec2 {
+export function direction(pts: Vec2[]): Vec2 {
   const a = pts[0];
   const b = pts[pts.length - 1];
   const l = dist(a, b) || 1;
   return { x: (b.x - a.x) / l, y: (b.y - a.y) / l };
 }
 
-function trimTo(pts: Vec2[], length: number): Vec2[] {
+export function trimTo(pts: Vec2[], length: number): Vec2[] {
   const out = [pts[0]];
   let len = 0;
   for (let i = 1; i < pts.length; i++) {
@@ -334,7 +371,7 @@ function layOutBorough(world: World, core: Shape, edge: GraphEdge, node: number)
   for (const side of [1, -1] as const) {
     for (const p of cutFrontage(street, side, { offset, depth: rules.burgageDepth, width, land, grain, street: streetName })) {
       const m = { x: (p.frontage.a.x + p.frontage.b.x) / 2, y: (p.frontage.a.y + p.frontage.b.y) / 2 };
-      if (wet.sample(m) > 0.45) continue;
+      if (wet.sample(m) > 0.45 || overlapsAny(p.shape, plots)) continue;
       plots.push(p);
     }
   }
@@ -378,6 +415,8 @@ export function plantBorough(world: World, core: Shape): Borough | null {
     const e = g.edges.get(id);
     if (!e) continue;
     e.planned = true;
+    e.floor = 'lane';
+    e.name = 'Market Street';
     if (e.cls === 'path' || e.cls === 'track') e.cls = 'lane';
   }
   const parcels = plotsFromStrips(world, plots, 'burgage', 'Open-field strips taken for burgage plots');
@@ -385,18 +424,22 @@ export function plantBorough(world: World, core: Shape): Borough | null {
 
   const marketLine = trimTo(street, rules.marketLength);
   const half = rules.marketWidth / 2;
-  const market = difference(bufferPolyline(marketLine, half), ...plotShapes)[0] ?? bufferPolyline(marketLine, half);
+  // The market place is the street widened, short of the new plots and anything already built there.
+  const standing = [...cad.parcels.values()].filter((p) => p.kind !== 'strip').map((p) => p.shape);
+  const market = difference(bufferPolyline(marketLine, half), ...plotShapes, ...standing)[0] ?? bufferPolyline(marketLine, half);
   const { regime, rights } = world.plugins.tenure.rights('market', cad.lord!, cad);
-  cad.addParcel('market', market, regime, rights, year);
+  // The market place, too, is taken out of the strips beneath it.
+  const underMarket = takeLand(world, [market], new Set(['strip']));
+  const marketParcel = cad.addParcel('market', market, regime, rights, year);
+  cad.retire(underMarket.consumed, year, 'Open-field strips taken for the market place', [marketParcel.id, ...underMarket.rest]);
 
-  addBackLanes(world, plots, street);
+  if (addBackLanes(world, plots, street)) world.log.push({ year, text: 'Back lanes are laid out behind both rows of plots.' });
   const marketCentre = resample(marketLine, 2)[Math.floor(resample(marketLine, 2).length / 2)];
   return { street, market, marketCentre, plots: parcels.length, streetName };
 }
 
 /** Planned back lanes behind each row of plots, joined to the street at each end. */
-function addBackLanes(world: World, plots: CutPlot[], street: Vec2[]): void {
-  const rules = world.plugins.technology.plots;
+export function addBackLanes(world: World, plots: CutPlot[], street: Vec2[], depth = world.plugins.technology.plots.burgageDepth): boolean {
   let lanes = 0;
   for (const side of [1, -1]) {
     const row = plots
@@ -411,15 +454,29 @@ function addBackLanes(world: World, plots: CutPlot[], street: Vec2[]): void {
     const back = row.map((p) => {
       const f = p.frontage;
       const m = { x: (f.a.x + f.b.x) / 2, y: (f.a.y + f.b.y) / 2 };
-      return { x: m.x + f.inward.x * (rules.burgageDepth + 3), y: m.y + f.inward.y * (rules.burgageDepth + 3) };
+      return { x: m.x + f.inward.x * (depth + 3), y: m.y + f.inward.y * (depth + 3) };
     });
     const first = row[0].frontage.a;
     const last = row[row.length - 1].frontage.b;
     const start = world.graph.junctionAt(first, 25, 10);
     const end = world.graph.junctionAt(last, 25, 10);
     if (!start || !end) continue;
-    const route = [start.pos, back[0], ...back, back[back.length - 1], end.pos];
-    const res = insertRoute(world.graph, route, 0, start.id, end.id, { ...DEFAULT_INSERT, year: world.clock.now, planned: true });
+    // The lane leaves the street just beyond the end plots and runs back beside them, not across them.
+    const out = (f: { a: Vec2; b: Vec2; inward: Vec2 }, corner: Vec2, sign: number) => {
+      const l = dist(f.a, f.b) || 1;
+      const u = { x: ((f.b.x - f.a.x) / l) * sign * 3, y: ((f.b.y - f.a.y) / l) * sign * 3 };
+      const front = { x: corner.x + u.x, y: corner.y + u.y };
+      return [front, { x: front.x + f.inward.x * (depth + 3), y: front.y + f.inward.y * (depth + 3) }];
+    };
+    const [startFront, startBack] = out(row[0].frontage, first, -1);
+    const [endFront, endBack] = out(row[row.length - 1].frontage, last, 1);
+    const route = [start.pos, startFront, startBack, ...back, endBack, endFront, end.pos];
+    const res = insertRoute(world.graph, route, 0, start.id, end.id, {
+      ...DEFAULT_INSERT,
+      year: world.clock.now,
+      planned: true,
+      allowed: (pts) => !crossesBuilding(world, pts),
+    });
     for (const id of res.newEdges) {
       const e = world.graph.edges.get(id);
       if (e) {
@@ -429,8 +486,5 @@ function addBackLanes(world: World, plots: CutPlot[], street: Vec2[]): void {
     }
     if (res.newEdges.length) lanes++;
   }
-  if (lanes) {
-    const text = lanes > 1 ? 'Back lanes are laid out behind both rows of plots.' : 'A back lane is laid out behind the new plots.';
-    world.log.push({ year: Math.round(world.clock.now), text });
-  }
+  return lanes > 0;
 }

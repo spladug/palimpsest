@@ -15,7 +15,9 @@ for (let y = 1; y <= years; y++) {
     console.log(
       `${900 + y}: places ${world.places.length}, nodes ${m.nodes}, edges ${m.edges}, ` +
         `len ${Object.entries(m.lengthByClass).map(([k, v]) => `${k}=${(v / 1000).toFixed(1)}km`).join(' ')}, ` +
-        `H=${m.orientationEntropy.toFixed(2)} mesh=${m.meshedness.toFixed(3)} dead=${m.deadEndShare.toFixed(2)} circ=${m.circuity.toFixed(2)}`,
+        `H=${m.orientationEntropy.toFixed(2)} mesh=${m.meshedness.toFixed(3)} dead=${m.deadEndShare.toFixed(2)} circ=${m.circuity.toFixed(2)}; ` +
+        `town ${world.town.households}/${Math.round(world.town.capacity)} parcels ${world.cadastre.parcels.size} buildings ${world.cadastre.buildings.size} ` +
+        `(${(performance.now() - t).toFixed(0)} ms)`,
     );
   }
 }

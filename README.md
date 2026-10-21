@@ -17,6 +17,8 @@ npm run headless -- valley 200   # run without a browser and print metrics
 
 ## Layout
 
-- `src/sim/` — the core: clock, rasters, routing, street graph, route insertion, metrics
+- `src/sim/` — the core: clock, rasters, routing, street graph, route insertion, metrics,
+  the cadastre and plots, and town dynamics (`dynamics.ts`, `expansion.ts`, `landuse.ts`,
+  `landvalue.ts`, `enclosure.ts`)
 - `src/plugins/` — plug-in interfaces and the medieval England scenario
 - `src/render/` — the 2D map view
