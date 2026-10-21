@@ -6,7 +6,7 @@
 // Unmatched stretches become new edges, joined to the graph at junctions where
 // they leave and rejoin existing ways.
 
-import { dist, resample, simplify, type Vec2 } from './geom';
+import { dist, polylineLength, projectOnPolyline, removeSpikes, resample, simplify, type Vec2 } from './geom';
 import type { StreetGraph } from './graph';
 
 export interface InsertOptions {
@@ -30,6 +30,9 @@ export const DEFAULT_INSERT: Omit<InsertOptions, 'year'> = {
   minNew: 40,
   minMatch: 25,
 };
+
+/** A new way is redundant if the network already joins its ends within this detour factor. */
+const REDUNDANT_DETOUR = 1.4;
 
 interface Run {
   matched: boolean;
@@ -58,8 +61,18 @@ export function insertRoute(
   const result: InsertResult = { newEdges: [], usedEdges: [] };
   if (samples.length < 2) return result;
 
-  // 1. Classify samples against the graph as it stands before insertion.
-  const hitEdge: (number | null)[] = samples.map((s) => graph.nearestEdge(s, opts.snap)?.edge.id ?? null);
+  // 1. Classify samples against the graph as it stands before insertion. A
+  // sample keeps to the way the previous sample followed while it is within
+  // reach, so a route between two close parallel ways doesn't flip-flop.
+  const hitEdge: (number | null)[] = [];
+  for (let i = 0; i < samples.length; i++) {
+    const prev = i > 0 ? hitEdge[i - 1] : null;
+    if (prev !== null && projectOnPolyline(samples[i], graph.edges.get(prev)!.pts).dist <= opts.snap) {
+      hitEdge.push(prev);
+    } else {
+      hitEdge.push(graph.nearestEdge(samples[i], opts.snap)?.edge.id ?? null);
+    }
+  }
   const sharesNode = (e1: number, e2: number): boolean => {
     if (e1 === e2) return true;
     const a = graph.edges.get(e1)!;
@@ -109,7 +122,10 @@ export function insertRoute(
       graph.mergeNodes(keep, keep === b ? a : b);
       return keep;
     }
-    const geom = simplify([na.pos, ...via, nb.pos], opts.step * 0.4);
+    const geom = removeSpikes(simplify([na.pos, ...via, nb.pos], opts.step * 0.4));
+    // Skip ways the network already makes nearly redundant.
+    const len = polylineLength(geom);
+    if (graph.networkDistance(a, b, len * REDUNDANT_DETOUR) <= len * REDUNDANT_DETOUR) return b;
     const e = graph.addEdge(a, b, geom, 'path', 0, opts.year);
     e.yearUse = weight;
     result.newEdges.push(e.id);

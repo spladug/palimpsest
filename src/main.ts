@@ -143,4 +143,12 @@ seedInput.addEventListener('keydown', (e) => {
   }
 });
 
+// ?zoom=x,y,scale centres the view on a world point (metres) at a scale (px per metre).
+const zoom = params.get('zoom')?.split(',').map(Number);
+if (zoom && zoom.length === 3 && zoom.every(Number.isFinite)) {
+  const r = canvas.getBoundingClientRect();
+  view.scale = zoom[2];
+  view.origin = { x: zoom[0] - r.width / 2 / zoom[2], y: zoom[1] - r.height / 2 / zoom[2] };
+}
+
 requestAnimationFrame(frame);

@@ -143,3 +143,32 @@ export function undirectedBearing(a: Vec2, b: Vec2): number {
   const deg = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
   return ((deg % 180) + 180) % 180;
 }
+
+/**
+ * Remove vertices where the line doubles back on itself (turns sharper than
+ * `maxTurnDeg`), repeating until none remain. Endpoints are kept.
+ */
+export function removeSpikes(pts: readonly Vec2[], maxTurnDeg = 135): Vec2[] {
+  const out = pts.slice();
+  const limit = Math.cos(((180 - maxTurnDeg) * Math.PI) / 180);
+  let changed = true;
+  while (changed && out.length > 2) {
+    changed = false;
+    for (let i = 1; i < out.length - 1; i++) {
+      const ax = out[i].x - out[i - 1].x;
+      const ay = out[i].y - out[i - 1].y;
+      const bx = out[i + 1].x - out[i].x;
+      const by = out[i + 1].y - out[i].y;
+      const la = Math.hypot(ax, ay);
+      const lb = Math.hypot(bx, by);
+      // cos of the angle between the incoming and outgoing directions.
+      const c = la && lb ? (ax * bx + ay * by) / (la * lb) : 1;
+      if (c < -limit || la === 0 || lb === 0) {
+        out.splice(i, 1);
+        changed = true;
+        break;
+      }
+    }
+  }
+  return out;
+}

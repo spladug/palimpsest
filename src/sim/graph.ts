@@ -4,6 +4,7 @@
 import {
   dist,
   polylineLength,
+  removeSpikes,
   projectOnPolyline,
   splitPolylineAt,
   type PolylineProjection,
@@ -273,10 +274,38 @@ export class StreetGraph {
     this.removeEdge(id2);
     this.adjacency.delete(nodeId);
     this.nodes.delete(nodeId);
-    const merged = this.addEdge(start, end, [...p1, ...p2.slice(1)], e1.cls, usage, Math.min(e1.created, e2.created));
+    const merged = this.addEdge(start, end, removeSpikes([...p1, ...p2.slice(1)]), e1.cls, usage, Math.min(e1.created, e2.created));
     merged.yearUse = yearUse;
     merged.pressure = Math.min(e1.pressure, e2.pressure);
     return true;
+  }
+
+  /**
+   * Shortest network distance between two nodes, or Infinity if it exceeds
+   * `limit`. Bounded, so it stays cheap for local questions.
+   */
+  networkDistance(from: number, to: number, limit: number): number {
+    const d = new Map<number, number>([[from, 0]]);
+    const queue: [number, number][] = [[0, from]];
+    while (queue.length) {
+      let bi = 0;
+      for (let i = 1; i < queue.length; i++) if (queue[i][0] < queue[bi][0]) bi = i;
+      const [du, u] = queue[bi];
+      queue[bi] = queue[queue.length - 1];
+      queue.pop();
+      if (du > (d.get(u) ?? Infinity)) continue;
+      if (u === to) return du;
+      for (const eid of this.edgesAt(u)) {
+        const e = this.edges.get(eid)!;
+        const v = this.other(e, u);
+        const nd = du + this.length(e);
+        if (nd <= limit && nd < (d.get(v) ?? Infinity)) {
+          d.set(v, nd);
+          queue.push([nd, v]);
+        }
+      }
+    }
+    return Infinity;
   }
 
   totalLength(): number {
