@@ -163,8 +163,16 @@ stretch goal.
 
 1. **Paths** — terrain, river and ford, gateways and farmsteads, regional
    bootstrap, walkers, wear, graph insertion, edge hierarchy, cheap street
-   metrics, new farmsteads drawn to tracks.
+   metrics, new farmsteads drawn to tracks. *Done.*
 2. **Countryside** — field pipeline, strip allocation, open-field event.
+   *Done:* farmsteads get hedged closes; the open-field event (c. 1000–1080)
+   pools the township, lays out furlongs (Voronoi cells classed as arable,
+   meadow or common by terrain) cut into reverse-S strips running downslope,
+   allocates them by sun-division with demesne blocks and glebe, and draws
+   most households into a nucleated village by the church (deserted
+   farmsteads' ways then fade). Standing crops are costly to walk across, so
+   journeys keep to headlands. A three-course rotation colours the fields.
+   Click a parcel to see its rights bundle and the holder's scattered strips.
 3. **Nucleus** — planting event, rights table, burgage plots from whole
    fields, history log, first land uses.
 4. **US railroad scenario.**

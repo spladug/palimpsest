@@ -208,3 +208,42 @@ button.primary {
     border-top: 1px solid var(--line);
   }
 }
+
+.hint {
+  margin: -6px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+#inspect-body h3 {
+  font: 600 15px/1.3 Georgia, serif;
+  margin: 0 0 2px;
+}
+
+#inspect-body p {
+  margin: 0 0 8px;
+  color: var(--muted);
+}
+
+.rights {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.rights td {
+  padding: 2px 0;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.rights td:first-child {
+  color: var(--muted);
+  width: 40%;
+}
+
+.rights td.none {
+  color: var(--muted);
+  font-style: italic;
+}

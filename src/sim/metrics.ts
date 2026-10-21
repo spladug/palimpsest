@@ -91,7 +91,7 @@ export function computeMetrics(world: World): Metrics {
 /** Dijkstra over the graph from each place to every other place. */
 function circuity(world: World): number {
   const g = world.graph;
-  const places = world.places.filter((p) => g.nodes.has(p.nodeId));
+  const places = world.places.filter((p) => p.kind !== 'field' && g.nodes.has(p.nodeId));
   let sum = 0;
   let count = 0;
   for (const src of places) {

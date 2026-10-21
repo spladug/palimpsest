@@ -8,9 +8,13 @@ import { Pathfinder, type CostField } from './pathfind';
 import { Raster } from './raster';
 import { Rng } from './rng';
 import { computeMetrics, type Metrics } from './metrics';
+import { Cadastre } from './cadastre';
+import { layOutCloses, rasteriseLandUse } from './fields';
+import { pointInShape, type Shape } from './polygon';
 import type { Plugins, Terrain, TripDemand } from '../plugins/types';
 
-export type PlaceKind = 'gateway' | 'farmstead' | 'church';
+/** 'field' places are the gates of furlongs: trip ends, not drawn. */
+export type PlaceKind = 'gateway' | 'farmstead' | 'church' | 'village' | 'field';
 
 export interface Place {
   id: number;
@@ -46,10 +50,17 @@ export interface World {
   /** Routes walked in the latest year, for display. */
   recentRoutes: Vec2[][];
   nextPlaceId: number;
+  cadastre: Cadastre;
+  /** Speed multiplier from land use (standing crops, hedged closes, meadow). */
+  landFactor: Raster;
+  /** The township laid out in open fields, once it has been. */
+  township: Shape | null;
+  /** Abandoned farmsteads, for the map. */
+  deserted: { name: string; pos: Vec2; year: number }[];
 }
 
 /** Sampled walker routes per year; each stands for many real trips. */
-const ROUTES_PER_YEAR = 14;
+const ROUTES_PER_YEAR = 18;
 
 export function createWorld(seed: string, plugins: Plugins, startYear = 900): World {
   const rng = new Rng(seed);
@@ -84,11 +95,20 @@ export function createWorld(seed: string, plugins: Plugins, startYear = 900): Wo
     pathfinder: new Pathfinder(h.width, h.height),
     recentRoutes: [],
     nextPlaceId: 1,
+    cadastre: new Cadastre(),
+    landFactor: new Raster(h.width, h.height, h.cellSize, 1),
+    township: null,
+    deserted: [],
   };
+  world.cadastre.lord = world.cadastre.addHolder('lord', 'the lord').id;
+  world.cadastre.community = world.cadastre.addHolder('community', 'the township').id;
   for (const p of initial) addPlace(world, p.kind, p.name, p.pos, p.mass);
   updateCostField(world);
 
   bootstrapRoutes(world);
+  // Closes are laid out once the old routes exist, so hedges follow the tracks.
+  for (const p of world.places) if (p.kind === 'farmstead') settleHousehold(world, p);
+  updateLandUse(world);
   world.log.push({ year: startYear, text: 'Old routes cross the valley; a few farmsteads stand on the slopes.' });
 
   world.clock.addProcess({ name: 'movement', interval: 1, run: (w) => walk(w) }, startYear + 1);
@@ -118,6 +138,26 @@ export function addPlace(
   const place: Place = { id, kind, name, pos, mass, founded: world.clock.now, nodeId: node.id };
   world.places.push(place);
   return place;
+}
+
+/** A household for a new farmstead, with closes around it. */
+function settleHousehold(world: World, place: Place): void {
+  const holder = world.cadastre.addHolder('household', place.name, place.id);
+  layOutCloses(world, place.pos, holder.id, world.rng.fork(`closes-${place.id}`));
+}
+
+/** Remove a place: nobody travels to it any more and its ways will fade. */
+export function abandonPlace(world: World, place: Place): void {
+  const node = world.graph.nodes.get(placeNode(world, place));
+  if (node) node.placeId = null;
+  world.places = world.places.filter((p) => p !== place);
+  if (place.kind === 'farmstead') world.deserted.push({ name: place.name, pos: place.pos, year: Math.round(world.clock.now) });
+}
+
+/** Recompute land-use walking costs after the cadastre changes. */
+export function updateLandUse(world: World): void {
+  rasteriseLandUse(world);
+  refreshSpeed(world);
 }
 
 /** Place nodes can be merged away during insertion; find the live one. */
@@ -299,10 +339,11 @@ function refreshSpeed(world: World, cells?: Iterable<number>): void {
   const wet = world.terrain.wetness.data;
   const wear = world.wear.data;
   const worn = mv.wornGroundFactor - 1;
+  const land = world.landFactor.data;
   const update = (k: number) => {
     const wearF = 1 + (worn * wear[k]) / (wear[k] + mv.wearHalf);
-    const ground = 1 - (1 - mv.wetGroundFactor) * wet[k];
-    // A made way overrides wet ground; worn ground only partly does.
+    const ground = (1 - (1 - mv.wetGroundFactor) * wet[k]) * land[k];
+    // A made way overrides wet ground and crops; worn ground only partly does.
     sf[k] = Math.max(wf[k], wearF * ground);
   };
   if (cells) for (const k of cells) update(k);
@@ -318,8 +359,21 @@ function settle(world: World, now: number): void {
     const site = chooseFarmsteadSite(world);
     if (!site) continue;
     const name = farmName(world);
-    addPlace(world, 'farmstead', name, site, 1);
+    const place = addPlace(world, 'farmstead', name, site, 1);
+    settleHousehold(world, place);
     world.log.push({ year: Math.round(now), text: `A new farmstead, ${name}, is founded.` });
+  }
+  if (count) updateLandUse(world);
+
+  // Villages grow by new households (cottagers, younger sons) rather than new farms.
+  const villageRate = world.plugins.demand.newHouseholdRate(world);
+  const village = world.places.find((p) => p.kind === 'village');
+  if (village && world.rng.chance(villageRate)) {
+    village.mass += 1;
+    world.cadastre.addHolder('household', `household ${Math.round(village.mass)}`, village.id);
+    if (Math.round(village.mass) % 5 === 0) {
+      world.log.push({ year: Math.round(now), text: `${village.name} now has ${Math.round(village.mass)} households.` });
+    }
   }
 }
 
@@ -330,7 +384,7 @@ const FARM_NAMES = [
 ];
 
 function farmName(world: World): string {
-  const used = new Set(world.places.map((p) => p.name));
+  const used = new Set([...world.places.map((p) => p.name), ...world.deserted.map((d) => d.name)]);
   const free = FARM_NAMES.filter((n) => !used.has(n));
   if (free.length) return world.rng.pick(free);
   // Out of names: a "Nether" or "Upper" form of an existing one.
@@ -352,6 +406,9 @@ function chooseFarmsteadSite(world: World): Vec2 | null {
     const p = { x: world.rng.range(margin, W - margin), y: world.rng.range(margin, H - margin) };
     const base = world.plugins.geography.farmsteadSuitability(t, p);
     if (base <= 0) continue;
+    // Not inside the open fields, nor on another farm's land.
+    if (world.township && pointInShape(p, world.township)) continue;
+    if (world.cadastre.parcelAt(p)) continue;
     let nearest = Infinity;
     for (const pl of world.places) nearest = Math.min(nearest, dist(pl.pos, p));
     if (nearest < 220) continue;

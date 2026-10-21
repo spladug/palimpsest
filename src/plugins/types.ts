@@ -7,6 +7,7 @@ import type { Rng } from '../sim/rng';
 import type { SimEvent } from '../sim/clock';
 import type { World, Place, PlaceKind } from '../sim/world';
 import type { EdgeClass } from '../sim/graph';
+import type { Cadastre, ParcelKind, Regime } from '../sim/cadastre';
 
 export interface Terrain {
   /** Elevation in metres. */
@@ -62,10 +63,45 @@ export interface HierarchyRules {
   patience: number;
 }
 
+/** How land is laid out into fields. Lengths in metres, areas in m². */
+export interface FieldRules {
+  /** Typical reach of a farmstead's closes. */
+  closeRadius: number;
+  /** Spacing of close boundaries. */
+  closeSpacing: number;
+  /** Typical spacing between furlong centres. */
+  furlongSpacing: number;
+  minFurlongArea: number;
+  stripWidth: { mean: number; sd: number; min: number; max: number };
+  minStripArea: number;
+  /** Reverse-S amplitude as a fraction of strip length, and its cap. */
+  aratralCurve: number;
+  aratralMax: number;
+  /** Mean slope above which strips are turned to run downhill. */
+  drainageSlope: number;
+  /** Mean wetness above which land is meadow rather than arable. */
+  meadowWetness: number;
+  /** Mean slope above which land is left as common pasture. */
+  wasteSlope: number;
+  /** Chance a furlong holds a block of demesne. */
+  demesneShare: number;
+  /** Every nth strip in the rotation is glebe (the church's). */
+  glebeEvery: number;
+  /** Ground left open around the village centre for houses and yards. */
+  villageCoreRadius: number;
+  /** Width of walkable headland round each furlong. */
+  headland: number;
+  /** Walking-speed multipliers across standing crops, closes and meadow. */
+  cropFactor: number;
+  closeFactor: number;
+  meadowFactor: number;
+}
+
 export interface TechnologyPlugin {
   name: string;
   movement: MovementRules;
   hierarchy: HierarchyRules;
+  fields: FieldRules;
 }
 
 /** A right over a parcel (Schlager & Ostrom 1992, plus building rights). */
@@ -81,9 +117,11 @@ export type Right =
 
 export interface TenurePlugin {
   name: string;
-  rights: readonly Right[];
+  allRights: readonly Right[];
   /** Partible inheritance splits holdings among heirs; impartible passes them whole. */
   inheritance: 'partible' | 'impartible';
+  /** The regime and rights bundle for a new parcel of a kind, occupied by a holder. */
+  rights(kind: ParcelKind, occupant: number, cadastre: Cadastre): { regime: Regime; rights: Partial<Record<Right, number>> };
 }
 
 export interface TripDemand {
@@ -99,6 +137,8 @@ export interface DemandPlugin {
   trips(world: World): TripDemand[];
   /** Expected number of new farmsteads founded this year. */
   newFarmsteadRate(world: World): number;
+  /** Expected number of new households in villages this year. */
+  newHouseholdRate(world: World): number;
   /** Scenario events to schedule at the start. */
   events(world: World): SimEvent<World>[];
 }

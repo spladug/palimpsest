@@ -1,6 +1,8 @@
 // 2D map view. Reads world state; never changes it.
 
+import { cropIn, type Parcel } from '../sim/cadastre';
 import type { Vec2 } from '../sim/geom';
+import type { Shape } from '../sim/polygon';
 import type { EdgeClass } from '../sim/graph';
 import { Raster } from '../sim/raster';
 import type { World } from '../sim/world';
@@ -9,6 +11,32 @@ export interface Layers {
   wear: boolean;
   routes: boolean;
   labels: boolean;
+  fields: boolean;
+  ghosts: boolean;
+}
+
+const CROP_COLOUR = {
+  'winter corn': 'rgba(222, 196, 110, 0.75)',
+  'spring corn': 'rgba(176, 196, 112, 0.75)',
+  fallow: 'rgba(196, 176, 146, 0.7)',
+};
+
+function shapePath(path: Path2D, shape: Shape): void {
+  for (const ring of shape) {
+    ring.forEach((p, i) => (i ? path.lineTo(p.x, p.y) : path.moveTo(p.x, p.y)));
+    path.closePath();
+  }
+}
+
+/** Paths for each group of parcels, rebuilt only when the cadastre changes. */
+interface ParcelPaths {
+  version: number;
+  stripsByField: Path2D[];
+  furlongs: Path2D;
+  closes: Path2D;
+  meadow: Path2D;
+  common: Path2D;
+  ghosts: Path2D;
 }
 
 interface WayStyle {
@@ -34,6 +62,12 @@ export class MapView {
   scale = 1;
   origin: Vec2 = { x: 0, y: 0 };
   private fitted = false;
+  private paths: ParcelPaths | null = null;
+  private pathsFor: World | null = null;
+  /** The holder whose land is highlighted, if any. */
+  selectedHolder: number | null = null;
+  selectedParcel: Parcel | null = null;
+  onClick: ((world: Vec2) => void) | null = null;
 
   constructor(private canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
@@ -51,17 +85,26 @@ export class MapView {
 
   private attachControls(): void {
     let drag: { x: number; y: number } | null = null;
+    let moved = 0;
     this.canvas.addEventListener('pointerdown', (e) => {
       drag = { x: e.clientX, y: e.clientY };
+      moved = 0;
       this.canvas.setPointerCapture(e.pointerId);
     });
     this.canvas.addEventListener('pointermove', (e) => {
       if (!drag) return;
+      moved += Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y);
       this.origin.x -= (e.clientX - drag.x) / this.scale;
       this.origin.y -= (e.clientY - drag.y) / this.scale;
       drag = { x: e.clientX, y: e.clientY };
     });
-    this.canvas.addEventListener('pointerup', () => (drag = null));
+    this.canvas.addEventListener('pointerup', (e) => {
+      drag = null;
+      if (moved < 5 && this.onClick) {
+        const r = this.canvas.getBoundingClientRect();
+        this.onClick({ x: this.origin.x + (e.clientX - r.left) / this.scale, y: this.origin.y + (e.clientY - r.top) / this.scale });
+      }
+    });
     this.canvas.addEventListener(
       'wheel',
       (e) => {
@@ -100,6 +143,7 @@ export class MapView {
     }
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(this.terrainImage!, 0, 0, W, H);
+    if (layers.fields) this.drawFields(world, layers.ghosts);
     this.drawRivers(world);
     if (layers.wear) {
       this.renderWear(world);
@@ -109,6 +153,91 @@ export class MapView {
     this.drawWays(world);
     this.drawFords(world);
     this.drawPlaces(world, layers.labels);
+  }
+
+  private parcelPaths(world: World): ParcelPaths {
+    const cad = world.cadastre;
+    if (this.paths && this.pathsFor === world && this.paths.version === cad.version) return this.paths;
+    const paths: ParcelPaths = {
+      version: cad.version,
+      stripsByField: [new Path2D(), new Path2D(), new Path2D()],
+      furlongs: new Path2D(),
+      closes: new Path2D(),
+      meadow: new Path2D(),
+      common: new Path2D(),
+      ghosts: new Path2D(),
+    };
+    for (const p of cad.parcels.values()) {
+      if (p.kind === 'strip') {
+        const f = p.furlongId !== null ? cad.furlongs.get(p.furlongId) : undefined;
+        shapePath(paths.stripsByField[f?.field ?? 0], p.shape);
+      } else if (p.kind === 'close') shapePath(paths.closes, p.shape);
+      else if (p.kind === 'meadow') shapePath(paths.meadow, p.shape);
+      else shapePath(paths.common, p.shape);
+    }
+    for (const f of cad.furlongs.values()) shapePath(paths.furlongs, f.shape);
+    for (const g of cad.ghosts) shapePath(paths.ghosts, g);
+    this.paths = paths;
+    this.pathsFor = world;
+    return paths;
+  }
+
+  private drawFields(world: World, ghosts: boolean): void {
+    const ctx = this.ctx;
+    const paths = this.parcelPaths(world);
+    const year = world.clock.now;
+    ctx.lineJoin = 'round';
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(205, 196, 150, 0.4)';
+    ctx.fill(paths.common, 'evenodd');
+    ctx.fillStyle = 'rgba(140, 192, 165, 0.5)';
+    ctx.fill(paths.meadow, 'evenodd');
+    paths.stripsByField.forEach((path, field) => {
+      ctx.fillStyle = CROP_COLOUR[cropIn(field, year)];
+      ctx.fill(path, 'evenodd');
+    });
+    // Ridge-and-furrow: the lines between strips.
+    ctx.strokeStyle = 'rgba(95, 75, 45, 0.35)';
+    ctx.lineWidth = this.px(0.5);
+    for (const path of paths.stripsByField) ctx.stroke(path);
+    ctx.strokeStyle = 'rgba(85, 62, 35, 0.55)';
+    ctx.lineWidth = this.px(1);
+    ctx.stroke(paths.furlongs);
+    ctx.fillStyle = 'rgba(150, 178, 105, 0.45)';
+    ctx.fill(paths.closes, 'evenodd');
+    ctx.strokeStyle = '#4f6b38';
+    ctx.lineWidth = this.px(1.6);
+    ctx.stroke(paths.closes);
+    if (ghosts) {
+      ctx.strokeStyle = 'rgba(110, 40, 30, 0.6)';
+      ctx.lineWidth = this.px(1);
+      ctx.setLineDash([this.px(3), this.px(3)]);
+      ctx.stroke(paths.ghosts);
+      ctx.setLineDash([]);
+    }
+    this.drawSelection(world);
+  }
+
+  private drawSelection(world: World): void {
+    const ctx = this.ctx;
+    if (this.selectedHolder !== null) {
+      const path = new Path2D();
+      for (const p of world.cadastre.parcels.values()) {
+        if (p.rights.withdrawal === this.selectedHolder && (p.kind === 'strip' || p.kind === 'close')) shapePath(path, p.shape);
+      }
+      ctx.fillStyle = 'rgba(122, 31, 31, 0.65)';
+      ctx.fill(path, 'evenodd');
+    }
+    if (this.selectedParcel && world.cadastre.parcels.has(this.selectedParcel.id)) {
+      const path = new Path2D();
+      shapePath(path, this.selectedParcel.shape);
+      ctx.strokeStyle = '#fff6d8';
+      ctx.lineWidth = this.px(2.5);
+      ctx.stroke(path);
+      ctx.strokeStyle = '#7a1f1f';
+      ctx.lineWidth = this.px(1.2);
+      ctx.stroke(path);
+    }
   }
 
   /** Line width in world units for a desired screen width that grows gently with zoom. */
@@ -204,10 +333,22 @@ export class MapView {
   private drawPlaces(world: World, labels: boolean): void {
     const ctx = this.ctx;
     const size = this.px(7);
+    for (const d of world.deserted) {
+      ctx.save();
+      ctx.translate(d.pos.x, d.pos.y);
+      ctx.strokeStyle = 'rgba(70, 60, 50, 0.7)';
+      ctx.lineWidth = this.px(1);
+      ctx.strokeRect(-size / 2, -size / 3, size, size * 0.66);
+      ctx.restore();
+      if (labels) this.label(d.name, d.pos, 9, true, 'rgba(70, 60, 50, 0.75)');
+    }
     for (const p of world.places) {
+      if (p.kind === 'field') continue;
       ctx.save();
       ctx.translate(p.pos.x, p.pos.y);
-      if (p.kind === 'farmstead') {
+      if (p.kind === 'village') {
+        this.drawVillage(Math.round(p.mass), size);
+      } else if (p.kind === 'farmstead') {
         ctx.fillStyle = '#5a3b22';
         ctx.strokeStyle = '#f5ecd8';
         ctx.lineWidth = this.px(1);
@@ -242,16 +383,39 @@ export class MapView {
         ctx.fill();
       }
       ctx.restore();
-      if (labels) this.label(p.name, p.pos, p.kind === 'gateway' ? 11 : 10, p.kind === 'gateway');
+      if (labels) {
+        if (p.kind === 'village') this.label(p.name, { x: p.pos.x + 40, y: p.pos.y - 30 }, 14, false, '#2b2118', true);
+        else this.label(p.name, p.pos, p.kind === 'gateway' ? 11 : 10, p.kind === 'gateway');
+      }
     }
   }
 
-  private label(text: string, at: Vec2, sizePx: number, italic: boolean): void {
+  /** Until houses have plots of their own (milestone 3), a village is a cluster of houses. */
+  private drawVillage(households: number, size: number): void {
+    const ctx = this.ctx;
+    ctx.fillStyle = '#5a3b22';
+    ctx.strokeStyle = '#f5ecd8';
+    ctx.lineWidth = this.px(0.8);
+    const s = size * 0.8;
+    for (let k = 0; k < households; k++) {
+      // A sunflower spiral keeps the houses evenly spread.
+      const a = k * 2.39996;
+      const r = 14 + 9 * Math.sqrt(k);
+      const x = Math.cos(a) * r;
+      const y = Math.sin(a) * r;
+      ctx.beginPath();
+      ctx.rect(x - s / 2, y - s / 3, s, s * 0.66);
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+
+  private label(text: string, at: Vec2, sizePx: number, italic: boolean, colour = '#2b2118', bold = false): void {
     const ctx = this.ctx;
     const W = this.terrainFor!.terrain.height.worldWidth;
     const H = this.terrainFor!.terrain.height.worldHeight;
     ctx.save();
-    ctx.font = `${italic ? 'italic ' : ''}${sizePx / this.scale}px Georgia, serif`;
+    ctx.font = `${italic ? 'italic ' : ''}${bold ? '600 ' : ''}${sizePx / this.scale}px Georgia, serif`;
     const tw = ctx.measureText(text).width;
     // Keep labels inside the map.
     let x = at.x + 9 / this.scale;
@@ -260,7 +424,7 @@ export class MapView {
     ctx.lineWidth = 3 / this.scale;
     ctx.strokeStyle = 'rgba(250, 245, 230, 0.85)';
     ctx.strokeText(text, x, y);
-    ctx.fillStyle = '#2b2118';
+    ctx.fillStyle = colour;
     ctx.fillText(text, x, y);
     ctx.restore();
   }

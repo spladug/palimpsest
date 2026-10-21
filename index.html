@@ -40,12 +40,26 @@
           <button id="reset">New valley</button>
         </div>
 
+        <p class="hint">Click land to see who holds it.</p>
+
         <fieldset class="layers">
           <legend>Show</legend>
+          <label><input type="checkbox" id="layer-fields" checked /> Fields</label>
+          <label><input type="checkbox" id="layer-ghosts" /> Old boundaries</label>
           <label><input type="checkbox" id="layer-wear" /> Ground wear</label>
           <label><input type="checkbox" id="layer-routes" /> This year's journeys</label>
           <label><input type="checkbox" id="layer-labels" checked /> Names</label>
         </fieldset>
+
+        <section id="inspect" hidden>
+          <h2>Selected land</h2>
+          <div id="inspect-body"></div>
+        </section>
+
+        <section>
+          <h2>Land</h2>
+          <dl class="stats" id="land"></dl>
+        </section>
 
         <section>
           <h2>Ways</h2>
