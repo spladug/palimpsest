@@ -1,4 +1,4 @@
-# Town growth
+# Palimpsest
 
 A browser simulation of a settlement growing from scratch over centuries.
 The default scenario is an English river valley starting in 900 CE.
