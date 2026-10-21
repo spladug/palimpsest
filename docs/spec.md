@@ -174,7 +174,19 @@ stretch goal.
    journeys keep to headlands. A three-course rotation colours the fields.
    Click a parcel to see its rights bundle and the holder's scattered strips.
 3. **Nucleus** — planting event, rights table, burgage plots from whole
-   fields, history log, first land uses.
+   fields, history log, first land uses. *Done:* the village gets a
+   churchyard (church facing east) and tofts and crofts cut along its ways;
+   when they run out it spreads along its lanes, taking strips at the edge
+   of the fields. A water mill follows (c. 1070–1150). A market charter
+   (c. 1150–1230) plants a borough where the busiest road leaves the
+   village: a cigar-shaped market place and burgage plots of varied perch
+   widths whose side boundaries follow the old strips where they run within
+   35° of square, with planned back lanes behind each row. The strips under
+   the plots are given up (recorded in the history; slivers dropped).
+   Burgesses take up plots nearest the market first, shops on the market
+   frontage, houses beyond. Burgage tenure gives the burgess every right,
+   including sale and division; village tofts stay held of the lord.
+   Plot cutting is a general frontage cutter (`src/sim/plots.ts`).
 4. **US railroad scenario.**
 5. **3D view.**
 6. **Town dynamics** — burgage cycle, full land-use catalogue, fringe belts,

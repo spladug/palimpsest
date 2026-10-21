@@ -5,7 +5,17 @@ import type { Vec2 } from './geom';
 import { bounds, pointInShape, shapeArea, type Bounds, type Shape } from './polygon';
 import type { Right } from '../plugins/types';
 
-export type ParcelKind = 'close' | 'strip' | 'meadow' | 'common';
+export type ParcelKind =
+  | 'close'
+  | 'strip'
+  | 'meadow'
+  | 'common'
+  /** A village house plot (toft) with its garden behind (croft). */
+  | 'toft'
+  /** A town plot held by burgage tenure. */
+  | 'burgage'
+  | 'market'
+  | 'churchyard';
 
 /** How a parcel is held overall; the detail is in its rights. */
 export type Regime = 'private' | 'use-right' | 'common';
@@ -20,9 +30,20 @@ export interface Holder {
   placeId: number | null;
 }
 
+/** The street edge of a plot: its two front corners, and the direction into the plot. */
+export interface Frontage {
+  a: Vec2;
+  b: Vec2;
+  inward: Vec2;
+  street: string;
+}
+
 export interface Parcel {
   id: number;
   kind: ParcelKind;
+  frontage?: Frontage;
+  /** Year the current holder took it up, for plots. */
+  takenUp?: number;
   shape: Shape;
   bounds: Bounds;
   area: number;
@@ -32,6 +53,18 @@ export interface Parcel {
   furlongId: number | null;
   created: number;
   retired: number | null;
+}
+
+export interface Building {
+  id: number;
+  parcelId: number | null;
+  /** A land-use id from the technology plugin's catalogue. */
+  use: string;
+  footprint: Shape;
+  /** Ridge line, for drawing the roof. */
+  ridge: [Vec2, Vec2];
+  storeys: number;
+  built: number;
 }
 
 export interface Furlong {
@@ -60,6 +93,7 @@ export class Cadastre {
   readonly parcels = new Map<number, Parcel>();
   readonly holders = new Map<number, Holder>();
   readonly furlongs = new Map<number, Furlong>();
+  readonly buildings = new Map<number, Building>();
   greatFields: GreatField[] = [];
   readonly history: ParcelEvent[] = [];
   /** Boundaries of retired parcels, which later divisions may follow. */
@@ -109,6 +143,22 @@ export class Cadastre {
     return f;
   }
 
+  addBuilding(b: Omit<Building, 'id'>): Building {
+    const building = { ...b, id: this.nextId++ };
+    this.buildings.set(building.id, building);
+    this.version++;
+    return building;
+  }
+
+  /** Give a parcel a new rights bundle (it changes hands). */
+  regrant(parcel: Parcel, rights: Partial<Record<Right, number>>, regime: Regime, year: number, note: string): void {
+    parcel.rights = rights;
+    parcel.regime = regime;
+    parcel.takenUp = year;
+    this.version++;
+    this.history.push({ year, kind: 'reallocate', parents: [parcel.id], children: [parcel.id], note });
+  }
+
   /** Retire parcels, keeping their boundaries as ghosts. */
   retire(ids: number[], year: number, note: string, children: number[] = []): void {
     for (const id of ids) {
@@ -117,6 +167,7 @@ export class Cadastre {
       p.retired = year;
       this.ghosts.push(p.shape);
       this.parcels.delete(id);
+      for (const b of this.buildings.values()) if (b.parcelId === id) this.buildings.delete(b.id);
     }
     this.version++;
     this.history.push({ year, kind: children.length ? 'reallocate' : 'retire', parents: ids, children, note });

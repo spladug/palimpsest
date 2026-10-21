@@ -2,7 +2,9 @@
 // minster church near the crossing, then the reorganisation of the township
 // into open fields with its households drawn together into a village.
 
-import { dist } from '../../sim/geom';
+import { dist, resample } from '../../sim/geom';
+import { radialPolygon } from '../../sim/polygon';
+import { layOutChurchyard, layOutTofts, plantBorough } from '../../sim/town';
 import { tobler } from '../../sim/pathfind';
 import { closesWithin, layOutOpenFields, townshipOutline } from '../../sim/fields';
 import { abandonPlace, addPlace, updateLandUse, type World } from '../../sim/world';
@@ -48,6 +50,25 @@ const technology: TechnologyPlugin = {
     cropFactor: 0.5,
     closeFactor: 0.65,
     meadowFactor: 0.85,
+    plotFactor: 0.35,
+  },
+  plots: {
+    // Village tofts were broad; burgages narrow (Slater; Tait 2009 finds varied widths, not one unit).
+    toftWidths: { 4: 0.2, 5: 0.35, 6: 0.3, 8: 0.15 },
+    toftDepth: 70,
+    villageGrowth: 50,
+    burgageWidths: { 2: 0.15, 2.5: 0.15, 3: 0.3, 3.5: 0.25, 4: 0.15 },
+    // Stratford-upon-Avon's burgages of 1196 were 3½ × 12 perches (~18 × 60 m).
+    burgageDepth: 62,
+    boroughLength: 420,
+    marketLength: 120,
+    marketWidth: 32,
+  },
+  uses: {
+    cottage: { name: 'Cottage', building: { width: 12, depth: 6, setback: 4 }, storeys: 1 },
+    townhouse: { name: 'House', building: { width: 'full', depth: 10, setback: 0 }, storeys: 2 },
+    shop: { name: 'Shop and house', building: { width: 'full', depth: 12, setback: 0 }, storeys: 2 },
+    mill: { name: 'Water mill', building: { width: 10, depth: 7, setback: 0 }, storeys: 2 },
   },
 };
 
@@ -80,6 +101,23 @@ const tenure: TenurePlugin = {
       case 'common':
         Object.assign(r, { access: community, withdrawal: community, management: lord, alienation: lord });
         return { regime: 'common', rights: r };
+      case 'toft':
+        // A villein's house plot: his to live in and pass on, but held of the lord.
+        Object.assign(r, { access: occupant, withdrawal: occupant, management: occupant, exclusion: occupant });
+        Object.assign(r, { build: occupant, inherit: occupant, alienation: lord, subdivide: lord });
+        return { regime: 'private', rights: r };
+      case 'burgage':
+        // Burgage tenure: for a money rent the burgess may sell, divide, build and bequeath freely.
+        for (const right of ['access', 'withdrawal', 'management', 'exclusion', 'alienation', 'build', 'subdivide', 'inherit'] as const) {
+          r[right] = occupant;
+        }
+        return { regime: 'private', rights: r };
+      case 'market':
+        Object.assign(r, { access: community, management: lord, withdrawal: lord, alienation: lord });
+        return { regime: 'common', rights: r };
+      case 'churchyard':
+        Object.assign(r, { access: community, management: occupant, withdrawal: occupant, exclusion: occupant, alienation: occupant });
+        return { regime: 'private', rights: r };
     }
   },
 };
@@ -92,6 +130,9 @@ const FIELD_TRIPS_PER_HOUSEHOLD = 150;
 const TOWNSHIP_RADIUS = 1050;
 
 const VILLAGE_NAMES = ['Ashford', 'Brigford', 'Eastford', 'Fulford', 'Langford', 'Mickleford', 'Salford', 'Shefford', 'Wilford', 'Thornford'];
+
+const GIVEN = ['John', 'William', 'Robert', 'Richard', 'Walter', 'Hugh', 'Thomas', 'Roger', 'Henry', 'Geoffrey', 'Ralph', 'Agnes', 'Alice', 'Matilda', 'Emma', 'Joan', 'Isabel', 'Margery'];
+const TRADES = ['Smith', 'Baker', 'Tanner', 'Dyer', 'Webb', 'Fuller', 'Mercer', 'Cooper', 'Turner', 'Carter', 'Taylor', 'Glover', 'Chapman', 'Wright', 'Draper', 'Skinner', 'Brewer', 'Butcher', 'Chandler', 'Saddler'];
 
 const demand: DemandPlugin = {
   name: 'Dispersed settlement, then a nucleated village',
@@ -125,9 +166,26 @@ const demand: DemandPlugin = {
     const village = world.places.find((p) => p.kind === 'village');
     return village ? Math.max(0, 0.3 * (1 - village.mass / 70)) : 0;
   },
+  newBurgessRate(world: World): number {
+    const market = world.places.find((p) => p.kind === 'market');
+    if (!market) return 0;
+    // A rush of takers in the first decades, slowing as the best plots go.
+    const age = world.clock.now - market.founded;
+    return 0.8 + 5 * Math.exp(-age / 25);
+  },
+  burgessName(world: World): string {
+    const given = world.rng.pick(GIVEN);
+    // Many burgesses were named for their trade; others for the place they came from.
+    if (world.rng.chance(0.65)) return `${given} ${world.rng.pick(TRADES)}`;
+    const places = [...world.deserted.map((d) => d.name), ...world.places.filter((p) => p.kind === 'farmstead').map((p) => p.name)];
+    return places.length ? `${given} of ${world.rng.pick(places)}` : `${given} ${world.rng.pick(TRADES)}`;
+  },
   events(world: World) {
     const minsterYear = 950 + world.rng.int(0, 30);
     const fieldsYear = Math.max(minsterYear + 30, 1000 + world.rng.int(0, 80));
+    const millYear = fieldsYear + 10 + world.rng.int(0, 30);
+    // Most English boroughs were founded between about 1150 and 1250.
+    const charterYear = Math.max(fieldsYear + 60, 1150 + world.rng.int(0, 80));
     return [
       {
         time: minsterYear,
@@ -145,6 +203,8 @@ const demand: DemandPlugin = {
         name: 'open fields',
         fire: (w: World) => reorganise(w, fieldsYear),
       },
+      { time: millYear, name: 'mill', fire: (w: World) => buildMill(w, millYear) },
+      { time: charterYear, name: 'borough', fire: (w: World) => foundBorough(w, charterYear) },
     ];
   },
 };
@@ -182,6 +242,13 @@ function reorganise(world: World, year: number): void {
   const layout = layOutOpenFields(world, township, centre, moved, rng);
   for (const g of layout.gates) addPlace(world, 'field', cad.furlongs.get(g.furlongId)!.name, g.pos, g.area);
   world.township = township;
+  world.villageCore = layout.villageCore;
+  world.villageRadius = world.plugins.technology.fields.villageCoreRadius;
+  if (church) {
+    const holder = [...cad.holders.values()].find((h) => h.kind === 'church')!;
+    layOutChurchyard(world, church, holder.id);
+  }
+  layOutTofts(world, layout.villageCore, church?.pos ?? village.pos, moved);
   updateLandUse(world);
 
   const stayed = world.places.filter((p) => p.kind === 'farmstead' && pointInShape(p.pos, township)).length;
@@ -191,6 +258,63 @@ function reorganise(world: World, year: number): void {
       `The township's land is laid out anew in three open fields: ${layout.furlongs} furlongs of ${layout.strips} strips, ` +
       `with meadow by the river. ${movers.length} households leave their farmsteads for a new village, ${name}` +
       (stayed ? `; ${stayed} outlying ${stayed > 1 ? 'farms remain' : 'farm remains'}.` : '.'),
+  });
+}
+
+/** The lord's water mill, on the river bank near the village: every tenant must grind there. */
+function buildMill(world: World, year: number): void {
+  const village = world.places.find((p) => p.kind === 'village');
+  if (!village) return;
+  const river = world.terrain.rivers[0];
+  const ford = world.terrain.fords[0];
+  let best: { x: number; y: number } | null = null;
+  let bestD = Infinity;
+  for (const p of resample(river.centreline, 10)) {
+    if (dist(p, ford) < 180) continue;
+    const d = dist(p, village.pos);
+    if (d < bestD) {
+      bestD = d;
+      best = p;
+    }
+  }
+  if (!best || bestD > 900) return;
+  // Stand the mill on the village side of the river.
+  const dx = village.pos.x - best.x;
+  const dy = village.pos.y - best.y;
+  const l = Math.hypot(dx, dy) || 1;
+  const pos = { x: best.x + (dx / l) * (river.width / 2 + 9), y: best.y + (dy / l) * (river.width / 2 + 9) };
+  const cad = world.cadastre;
+  const { regime, rights } = world.plugins.tenure.rights('close', cad.lord!, cad);
+  const holme = cad.addParcel('close', radialPolygon(pos, () => 22, 14), regime, rights, year);
+  const ux = -dy / l;
+  const uy = dx / l;
+  const corner = (a: number, b: number) => ({ x: pos.x + ux * a + (dx / l) * b, y: pos.y + uy * a + (dy / l) * b });
+  cad.addBuilding({
+    parcelId: holme.id,
+    use: 'mill',
+    footprint: [[corner(-5, -3.5), corner(5, -3.5), corner(5, 3.5), corner(-5, 3.5)]],
+    ridge: [corner(-5, 0), corner(5, 0)],
+    storeys: 2,
+    built: year,
+  });
+  addPlace(world, 'mill', 'Mill', pos, 3);
+  updateLandUse(world);
+  world.log.push({ year, text: 'The lord builds a water mill on the river; his tenants must grind their corn there.' });
+}
+
+/** A market charter, and a planted borough laid out beside the village. */
+function foundBorough(world: World, year: number): void {
+  const village = world.places.find((p) => p.kind === 'village');
+  if (!village || !world.villageCore) return;
+  const borough = plantBorough(world, world.villageCore);
+  if (!borough) return;
+  addPlace(world, 'market', `${village.name} market`, borough.marketCentre, 3);
+  updateLandUse(world);
+  world.log.push({
+    year,
+    text:
+      `The lord obtains a market charter and plants a borough beside ${village.name}: a market place and ` +
+      `${borough.plots} burgage plots along ${borough.streetName}, cut from the open-field strips.`,
   });
 }
 

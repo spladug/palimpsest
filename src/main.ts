@@ -125,8 +125,11 @@ function renderMetrics(): void {
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 const acres = (m2: number) => `${(m2 / 4047).toFixed(m2 < 4047 * 10 ? 2 : 0)} acres`;
 
+/** Parcels that count as someone's holding (not commons, markets or churchyards). */
+const HELD_KINDS = new Set<Parcel['kind']>(['strip', 'close', 'toft', 'burgage']);
+
 const RIGHT_LABELS: Record<Right, string> = {
-  access: 'Enter and graze',
+  access: 'Enter or graze',
   withdrawal: 'Take the crop',
   management: 'Decide its use',
   exclusion: 'Keep others out',
@@ -141,6 +144,10 @@ const KIND_LABELS: Record<Parcel['kind'], string> = {
   strip: 'Strip',
   meadow: 'Common meadow',
   common: 'Common pasture',
+  toft: 'Toft and croft',
+  burgage: 'Burgage plot',
+  market: 'Market place',
+  churchyard: 'Churchyard',
 };
 
 function renderLand(): void {
@@ -180,9 +187,19 @@ function renderInspector(): void {
   const h3 = document.createElement('h3');
   h3.textContent = furlong ? `${KIND_LABELS[parcel.kind]} in ${furlong.name}` : KIND_LABELS[parcel.kind];
   const sub = document.createElement('p');
+  if (parcel.frontage) h3.textContent += ` on ${parcel.frontage.street}`;
   const bits = [acres(parcel.area)];
+  if (parcel.frontage) {
+    const f = parcel.frontage;
+    const perches = Math.round((Math.hypot(f.b.x - f.a.x, f.b.y - f.a.y) / 5.03) * 2) / 2;
+    bits.push(`${perches} perch${perches === 1 ? '' : 'es'} of frontage`);
+  }
   if (furlong) bits.push(`${cad.greatFields[furlong.field]?.name ?? ''}, ${cropIn(furlong.field, world.clock.now)} this year`);
   bits.push(`laid out ${parcel.created}`);
+  if (parcel.takenUp !== undefined) bits.push(`taken up ${parcel.takenUp}`);
+  else if (parcel.kind === 'toft' || parcel.kind === 'burgage') bits.push('not yet taken up');
+  const building = [...cad.buildings.values()].find((b) => b.parcelId === parcel.id);
+  if (building) bits.push(world.plugins.technology.uses[building.use]?.name.toLowerCase() ?? building.use);
   sub.textContent = bits.join(' · ');
   const table = document.createElement('table');
   table.className = 'rights';
@@ -205,7 +222,7 @@ function renderInspector(): void {
     let area = 0;
     const furlongs = new Set<number>();
     for (const p of cad.parcels.values()) {
-      if (p.rights.withdrawal !== holder || (p.kind !== 'strip' && p.kind !== 'close')) continue;
+      if (p.rights.withdrawal !== holder || !HELD_KINDS.has(p.kind)) continue;
       n++;
       area += p.area;
       if (p.furlongId !== null) furlongs.add(p.furlongId);
@@ -269,3 +286,13 @@ if (zoom && zoom.length === 3 && zoom.every(Number.isFinite)) {
 }
 
 requestAnimationFrame(frame);
+
+// For poking at the simulation from the console or test tools (dev builds only).
+if (import.meta.env.DEV) {
+  (window as unknown as { sim: unknown }).sim = {
+    get world() {
+      return world;
+    },
+    view,
+  };
+}

@@ -21,6 +21,8 @@ export interface InsertOptions {
   /** Matched stretches shorter than this are crossings, not travel along a way. */
   minMatch: number;
   year: number;
+  /** A planned way: add it even where the network already offers a similar route. */
+  planned?: boolean;
 }
 
 export const DEFAULT_INSERT: Omit<InsertOptions, 'year'> = {
@@ -125,9 +127,10 @@ export function insertRoute(
     const geom = removeSpikes(simplify([na.pos, ...via, nb.pos], opts.step * 0.4));
     // Skip ways the network already makes nearly redundant.
     const len = polylineLength(geom);
-    if (graph.networkDistance(a, b, len * REDUNDANT_DETOUR) <= len * REDUNDANT_DETOUR) return b;
+    if (!opts.planned && graph.networkDistance(a, b, len * REDUNDANT_DETOUR) <= len * REDUNDANT_DETOUR) return b;
     const e = graph.addEdge(a, b, geom, 'path', 0, opts.year);
     e.yearUse = weight;
+    e.planned = opts.planned;
     result.newEdges.push(e.id);
     return b;
   };

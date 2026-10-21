@@ -8,6 +8,7 @@ import type { SimEvent } from '../sim/clock';
 import type { World, Place, PlaceKind } from '../sim/world';
 import type { EdgeClass } from '../sim/graph';
 import type { Cadastre, ParcelKind, Regime } from '../sim/cadastre';
+import type { BuildingSpec } from '../sim/plots';
 
 export interface Terrain {
   /** Elevation in metres. */
@@ -95,6 +96,28 @@ export interface FieldRules {
   cropFactor: number;
   closeFactor: number;
   meadowFactor: number;
+  plotFactor: number;
+}
+
+/** How village and town plots are laid out. Widths are in perches (≈5.03 m) with weights. */
+export interface PlotRules {
+  toftWidths: Record<number, number>;
+  toftDepth: number;
+  /** How far the village edge moves out each time it runs out of tofts. */
+  villageGrowth: number;
+  burgageWidths: Record<number, number>;
+  burgageDepth: number;
+  /** Length of planted town street, and of the market place at its start. */
+  boroughLength: number;
+  marketLength: number;
+  marketWidth: number;
+}
+
+/** A kind of building and what it needs (the start of the land-use catalogue). */
+export interface UseType {
+  name: string;
+  building: BuildingSpec;
+  storeys: number;
 }
 
 export interface TechnologyPlugin {
@@ -102,6 +125,8 @@ export interface TechnologyPlugin {
   movement: MovementRules;
   hierarchy: HierarchyRules;
   fields: FieldRules;
+  plots: PlotRules;
+  uses: Record<string, UseType>;
 }
 
 /** A right over a parcel (Schlager & Ostrom 1992, plus building rights). */
@@ -139,6 +164,10 @@ export interface DemandPlugin {
   newFarmsteadRate(world: World): number;
   /** Expected number of new households in villages this year. */
   newHouseholdRate(world: World): number;
+  /** Expected number of burgesses taking up town plots this year. */
+  newBurgessRate(world: World): number;
+  /** A name for a newcomer to the town. */
+  burgessName(world: World): string;
   /** Scenario events to schedule at the start. */
   events(world: World): SimEvent<World>[];
 }

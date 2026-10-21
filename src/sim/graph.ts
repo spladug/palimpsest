@@ -34,6 +34,8 @@ export interface GraphEdge {
   /** Consecutive years spent above the upgrade or below the downgrade threshold. */
   pressure: number;
   created: number;
+  /** Laid out deliberately (a planned street or lane) and kept up, not just worn by use. */
+  planned?: boolean;
 }
 
 export interface EdgeHit {
@@ -209,6 +211,7 @@ export class StreetGraph {
     const e2 = this.addEdge(mid.id, e.b, second, e.cls, e.usage, e.created);
     e1.yearUse = e2.yearUse = e.yearUse;
     e1.pressure = e2.pressure = e.pressure;
+    e1.planned = e2.planned = e.planned;
     return mid;
   }
 
@@ -245,6 +248,7 @@ export class StreetGraph {
       const ne = this.addEdge(a, b, e.pts, e.cls, e.usage, e.created);
       ne.yearUse = e.yearUse;
       ne.pressure = e.pressure;
+      ne.planned = e.planned;
     }
     this.adjacency.delete(drop);
     this.nodes.delete(drop);
@@ -260,7 +264,7 @@ export class StreetGraph {
     const [id1, id2] = [...this.edgesAt(nodeId)];
     const e1 = this.edges.get(id1)!;
     const e2 = this.edges.get(id2)!;
-    if (e1.cls !== e2.cls) return false;
+    if (e1.cls !== e2.cls || !!e1.planned !== !!e2.planned) return false;
     const start = this.other(e1, nodeId);
     const end = this.other(e2, nodeId);
     if (start === end) return false;
@@ -277,6 +281,7 @@ export class StreetGraph {
     const merged = this.addEdge(start, end, removeSpikes([...p1, ...p2.slice(1)]), e1.cls, usage, Math.min(e1.created, e2.created));
     merged.yearUse = yearUse;
     merged.pressure = Math.min(e1.pressure, e2.pressure);
+    merged.planned = e1.planned;
     return true;
   }
 

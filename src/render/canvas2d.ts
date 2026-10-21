@@ -37,20 +37,37 @@ interface ParcelPaths {
   meadow: Path2D;
   common: Path2D;
   ghosts: Path2D;
+  tofts: Path2D;
+  burgages: Path2D;
+  vacant: Path2D;
+  market: Path2D;
+  churchyard: Path2D;
+  buildings: Map<string, Path2D>;
+  ridges: Path2D;
 }
+
+const ROOF_COLOUR: Record<string, string> = {
+  cottage: '#a08458',
+  townhouse: '#8d5f40',
+  shop: '#7f4c34',
+  church: '#9a9082',
+  mill: '#7d7264',
+};
 
 interface WayStyle {
   width: number;
+  /** Width on the ground in metres; ways are never drawn narrower than this. */
+  metres: number;
   colour: string;
   casing?: string;
   dash?: number[];
 }
 
 const WAY_STYLES: Record<EdgeClass, WayStyle> = {
-  path: { width: 1, colour: '#8a7a62', dash: [3, 3] },
-  track: { width: 1.8, colour: '#8b6b43' },
-  lane: { width: 3, colour: '#d9c79f', casing: '#6b4a2a' },
-  road: { width: 4.5, colour: '#f2e4b8', casing: '#4a3320' },
+  path: { width: 1, metres: 1.2, colour: '#8a7a62', dash: [3, 3] },
+  track: { width: 1.8, metres: 3, colour: '#8b6b43' },
+  lane: { width: 3, metres: 6, colour: '#d9c79f', casing: '#6b4a2a' },
+  road: { width: 4.5, metres: 10, colour: '#f2e4b8', casing: '#4a3320' },
 };
 
 export class MapView {
@@ -151,6 +168,7 @@ export class MapView {
     }
     if (layers.routes) this.drawRoutes(world);
     this.drawWays(world);
+    this.drawBuildings(world);
     this.drawFords(world);
     this.drawPlaces(world, layers.labels);
   }
@@ -166,6 +184,13 @@ export class MapView {
       meadow: new Path2D(),
       common: new Path2D(),
       ghosts: new Path2D(),
+      tofts: new Path2D(),
+      burgages: new Path2D(),
+      vacant: new Path2D(),
+      market: new Path2D(),
+      churchyard: new Path2D(),
+      buildings: new Map(),
+      ridges: new Path2D(),
     };
     for (const p of cad.parcels.values()) {
       if (p.kind === 'strip') {
@@ -173,7 +198,18 @@ export class MapView {
         shapePath(paths.stripsByField[f?.field ?? 0], p.shape);
       } else if (p.kind === 'close') shapePath(paths.closes, p.shape);
       else if (p.kind === 'meadow') shapePath(paths.meadow, p.shape);
+      else if (p.kind === 'toft') shapePath(paths.tofts, p.shape);
+      else if (p.kind === 'burgage') shapePath(p.takenUp === undefined ? paths.vacant : paths.burgages, p.shape);
+      else if (p.kind === 'market') shapePath(paths.market, p.shape);
+      else if (p.kind === 'churchyard') shapePath(paths.churchyard, p.shape);
       else shapePath(paths.common, p.shape);
+    }
+    for (const b of cad.buildings.values()) {
+      let path = paths.buildings.get(b.use);
+      if (!path) paths.buildings.set(b.use, (path = new Path2D()));
+      shapePath(path, b.footprint);
+      paths.ridges.moveTo(b.ridge[0].x, b.ridge[0].y);
+      paths.ridges.lineTo(b.ridge[1].x, b.ridge[1].y);
     }
     for (const f of cad.furlongs.values()) shapePath(paths.furlongs, f.shape);
     for (const g of cad.ghosts) shapePath(paths.ghosts, g);
@@ -208,6 +244,25 @@ export class MapView {
     ctx.strokeStyle = '#4f6b38';
     ctx.lineWidth = this.px(1.6);
     ctx.stroke(paths.closes);
+    // Village and town plots.
+    ctx.fillStyle = 'rgba(176, 196, 128, 0.6)';
+    ctx.fill(paths.tofts, 'evenodd');
+    ctx.fillStyle = 'rgba(196, 186, 140, 0.7)';
+    ctx.fill(paths.burgages, 'evenodd');
+    ctx.fillStyle = 'rgba(222, 214, 186, 0.55)';
+    ctx.fill(paths.vacant, 'evenodd');
+    ctx.fillStyle = 'rgba(150, 175, 130, 0.75)';
+    ctx.fill(paths.churchyard, 'evenodd');
+    ctx.fillStyle = '#d9ceb4';
+    ctx.fill(paths.market, 'evenodd');
+    ctx.strokeStyle = 'rgba(70, 52, 34, 0.75)';
+    ctx.lineWidth = this.px(0.7);
+    ctx.stroke(paths.tofts);
+    ctx.stroke(paths.burgages);
+    ctx.stroke(paths.churchyard);
+    ctx.setLineDash([this.px(2), this.px(2)]);
+    ctx.stroke(paths.vacant);
+    ctx.setLineDash([]);
     if (ghosts) {
       ctx.strokeStyle = 'rgba(110, 40, 30, 0.6)';
       ctx.lineWidth = this.px(1);
@@ -218,12 +273,30 @@ export class MapView {
     this.drawSelection(world);
   }
 
+  private drawBuildings(world: World): void {
+    const ctx = this.ctx;
+    const paths = this.parcelPaths(world);
+    ctx.setLineDash([]);
+    ctx.lineJoin = 'miter';
+    for (const [use, path] of paths.buildings) {
+      ctx.fillStyle = ROOF_COLOUR[use] ?? '#7a5a40';
+      ctx.fill(path, 'evenodd');
+    }
+    ctx.strokeStyle = 'rgba(45, 30, 18, 0.85)';
+    ctx.lineWidth = this.px(0.6);
+    for (const path of paths.buildings.values()) ctx.stroke(path);
+    ctx.strokeStyle = 'rgba(45, 30, 18, 0.5)';
+    ctx.lineWidth = this.px(0.5);
+    ctx.stroke(paths.ridges);
+  }
+
   private drawSelection(world: World): void {
     const ctx = this.ctx;
     if (this.selectedHolder !== null) {
       const path = new Path2D();
       for (const p of world.cadastre.parcels.values()) {
-        if (p.rights.withdrawal === this.selectedHolder && (p.kind === 'strip' || p.kind === 'close')) shapePath(path, p.shape);
+        const held = p.kind === 'strip' || p.kind === 'close' || p.kind === 'toft' || p.kind === 'burgage';
+        if (p.rights.withdrawal === this.selectedHolder && held) shapePath(path, p.shape);
       }
       ctx.fillStyle = 'rgba(122, 31, 31, 0.65)';
       ctx.fill(path, 'evenodd');
@@ -295,9 +368,9 @@ export class MapView {
     ctx.lineJoin = ctx.lineCap = 'round';
     const order: EdgeClass[] = ['path', 'track', 'lane', 'road'];
     const edges = [...world.graph.edges.values()];
-    const stroke = (cls: EdgeClass, colour: string, width: number, dash?: number[]) => {
+    const stroke = (cls: EdgeClass, colour: string, width: number, dash?: number[], extra = 0) => {
       ctx.strokeStyle = colour;
-      ctx.lineWidth = this.px(width);
+      ctx.lineWidth = Math.max(this.px(width), WAY_STYLES[cls].metres + extra / this.scale);
       ctx.setLineDash(dash ? dash.map((d) => this.px(d)) : []);
       ctx.beginPath();
       for (const e of edges) {
@@ -308,7 +381,7 @@ export class MapView {
     };
     for (const cls of order) {
       const s = WAY_STYLES[cls];
-      if (s.casing) stroke(cls, s.casing, s.width + 1.6);
+      if (s.casing) stroke(cls, s.casing, s.width + 1.6, undefined, 1.6);
     }
     for (const cls of order) {
       const s = WAY_STYLES[cls];
@@ -346,8 +419,8 @@ export class MapView {
       if (p.kind === 'field') continue;
       ctx.save();
       ctx.translate(p.pos.x, p.pos.y);
-      if (p.kind === 'village') {
-        this.drawVillage(Math.round(p.mass), size);
+      if (p.kind === 'village' || p.kind === 'market' || p.kind === 'mill') {
+        // Drawn as their buildings and plots.
       } else if (p.kind === 'farmstead') {
         ctx.fillStyle = '#5a3b22';
         ctx.strokeStyle = '#f5ecd8';
@@ -362,6 +435,11 @@ export class MapView {
         ctx.fill();
         ctx.stroke();
       } else if (p.kind === 'church') {
+        if ([...world.cadastre.buildings.values()].some((b) => b.use === 'church')) {
+          ctx.restore();
+          if (labels) this.label(p.name, p.pos, 10, true);
+          continue;
+        }
         ctx.strokeStyle = '#f5ecd8';
         ctx.lineWidth = this.px(4);
         const cross = () => {
@@ -385,28 +463,10 @@ export class MapView {
       ctx.restore();
       if (labels) {
         if (p.kind === 'village') this.label(p.name, { x: p.pos.x + 40, y: p.pos.y - 30 }, 14, false, '#2b2118', true);
+        else if (p.kind === 'market') this.label('Market', p.pos, 10, true);
+        else if (p.kind === 'church' || p.kind === 'mill') this.label(p.name, p.pos, 10, true);
         else this.label(p.name, p.pos, p.kind === 'gateway' ? 11 : 10, p.kind === 'gateway');
       }
-    }
-  }
-
-  /** Until houses have plots of their own (milestone 3), a village is a cluster of houses. */
-  private drawVillage(households: number, size: number): void {
-    const ctx = this.ctx;
-    ctx.fillStyle = '#5a3b22';
-    ctx.strokeStyle = '#f5ecd8';
-    ctx.lineWidth = this.px(0.8);
-    const s = size * 0.8;
-    for (let k = 0; k < households; k++) {
-      // A sunflower spiral keeps the houses evenly spread.
-      const a = k * 2.39996;
-      const r = 14 + 9 * Math.sqrt(k);
-      const x = Math.cos(a) * r;
-      const y = Math.sin(a) * r;
-      ctx.beginPath();
-      ctx.rect(x - s / 2, y - s / 3, s, s * 0.66);
-      ctx.fill();
-      ctx.stroke();
     }
   }
 

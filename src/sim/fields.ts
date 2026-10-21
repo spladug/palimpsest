@@ -201,6 +201,8 @@ export function cutStrips(shape: Shape, theta: number, rng: Rng, rules: FieldRul
 
 export interface OpenFieldLayout {
   township: Shape;
+  /** Ground left around the village centre for house plots. */
+  villageCore: Shape;
   furlongs: number;
   strips: number;
   meadows: number;
@@ -251,8 +253,9 @@ export function layOutOpenFields(
     return { name: `${compass(mid)} Field` };
   });
 
-  const layout: OpenFieldLayout = { township, furlongs: 0, strips: 0, meadows: 0, commons: 0, gates: [] };
+  const layout: OpenFieldLayout = { township, villageCore, furlongs: 0, strips: 0, meadows: 0, commons: 0, gates: [] };
   const names = [...FURLONG_NAMES];
+  const used = new Set<string>();
   const community = cad.community!;
   const lord = cad.lord!;
   const church = [...cad.holders.values()].find((h) => h.kind === 'church')?.id ?? null;
@@ -281,7 +284,8 @@ export function layOutOpenFields(
         // Strips run downslope so the furrows drain; on the flat, any way.
         const theta = Math.hypot(s.gx, s.gy) > rules.drainageSlope ? Math.atan2(s.gy, s.gx) : rng.range(0, Math.PI);
         const c = ringCentroid(part[0]);
-        const name = names.length ? names.splice(rng.int(0, names.length), 1)[0] : `Furlong ${layout.furlongs + 1}`;
+        const name = names.length ? names.splice(rng.int(0, names.length), 1)[0] : qualifiedName(rng, used);
+        used.add(name);
         const furlong = cad.addFurlong(name, part, theta, fieldOf(c));
         layout.furlongs++;
 
@@ -314,6 +318,15 @@ export function layOutOpenFields(
     }
   }
   return layout;
+}
+
+/** Once the plain names are used up: Upper Long Furlong, Nether Butts, and so on. */
+function qualifiedName(rng: Rng, used: Set<string>): string {
+  for (let k = 0; k < 50; k++) {
+    const name = `${rng.pick(['Upper', 'Nether', 'Little', 'Great', 'Over', 'Far'])} ${rng.pick(FURLONG_NAMES)}`;
+    if (!used.has(name)) return name;
+  }
+  return `Furlong ${used.size + 1}`;
 }
 
 /** The bounds of a township: a wobbly area around its centre, within the map. */
@@ -363,5 +376,7 @@ export function rasteriseLandUse(world: World): void {
   for (const p of world.cadastre.parcels.values()) {
     if (p.kind === 'close') paint(p.shape, (q) => (distanceToBoundary(q, p.shape) < rules.headland ? 0.9 : rules.closeFactor));
     else if (p.kind === 'meadow') paint(p.shape, () => rules.meadowFactor);
+    // House plots are private: people go round by the street or the back lane.
+    else if (p.kind === 'toft' || p.kind === 'burgage' || p.kind === 'churchyard') paint(p.shape, () => rules.plotFactor);
   }
 }

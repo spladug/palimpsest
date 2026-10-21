@@ -24,25 +24,71 @@ const fromPc = (mp: MultiPolygon): Shape[] =>
     }),
   );
 
+/** Snap coordinates to a millimetre grid; often enough to get past a degenerate case. */
+const snapShape = (shape: Shape): Shape =>
+  shape.map((ring) => ring.map((p) => ({ x: Math.round(p.x * 1000) / 1000, y: Math.round(p.y * 1000) / 1000 })));
+
+/**
+ * polygon-clipping occasionally fails on near-degenerate input (many overlapping
+ * buffers meeting at shallow angles). Retry on a snapped grid before giving up.
+ */
+function robust<T>(op: (snap: (s: Shape) => Shape) => T): T {
+  try {
+    return op((x) => x);
+  } catch {
+    return op(snapShape);
+  }
+}
+
 export function union(...shapes: Shape[]): Shape[] {
   if (!shapes.length) return [];
-  const [first, ...rest] = shapes.map(toPc);
-  return fromPc(polygonClipping.union(first, ...rest));
+  try {
+    return robust((snap) => {
+      const [first, ...rest] = shapes.map((x) => toPc(snap(x)));
+      return fromPc(polygonClipping.union(first, ...rest));
+    });
+  } catch {
+    // Fold the shapes in one at a time, skipping any that still fail.
+    let acc: Shape[] = [shapes[0]];
+    for (const next of shapes.slice(1)) {
+      try {
+        acc = fromPc(polygonClipping.union(acc.map(toPc), toPc(snapShape(next))));
+      } catch {
+        /* skip */
+      }
+    }
+    return acc;
+  }
 }
 
 export function intersection(a: Shape, ...others: Shape[]): Shape[] {
-  return fromPc(polygonClipping.intersection(toPc(a), ...others.map(toPc)));
+  try {
+    return robust((snap) => fromPc(polygonClipping.intersection(toPc(snap(a)), ...others.map((o) => toPc(snap(o))))));
+  } catch {
+    return [];
+  }
 }
 
 export function difference(a: Shape, ...others: Shape[]): Shape[] {
-  if (!others.length) return [a];
-  return fromPc(polygonClipping.difference(toPc(a), ...others.map(toPc)));
+  return differenceMany(a, others);
 }
 
-/** Same as difference, but subtracting an already-unioned multi-shape. */
+/** Subtract many shapes from one. */
 export function differenceMany(a: Shape, others: Shape[]): Shape[] {
   if (!others.length) return [a];
-  return fromPc(polygonClipping.difference(toPc(a), others.map(toPc)));
+  try {
+    return robust((snap) => fromPc(polygonClipping.difference(toPc(snap(a)), others.map((o) => toPc(snap(o))))));
+  } catch {
+    let acc: Shape[] = [a];
+    for (const o of others) {
+      try {
+        acc = fromPc(polygonClipping.difference(acc.map((x) => toPc(snapShape(x))), toPc(snapShape(o))));
+      } catch {
+        /* skip a subtrahend that cannot be processed */
+      }
+    }
+    return acc;
+  }
 }
 
 export function ringArea(ring: readonly Vec2[]): number {
@@ -58,6 +104,13 @@ export function shapeArea(shape: Shape): number {
   let a = Math.abs(ringArea(shape[0]));
   for (let k = 1; k < shape.length; k++) a -= Math.abs(ringArea(shape[k]));
   return a;
+}
+
+/** Average thickness of a shape (2 × area ÷ perimeter): small for slivers. */
+export function thickness(shape: Shape): number {
+  let perimeter = 0;
+  for (const ring of shape) for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) perimeter += dist(ring[i], ring[j]);
+  return perimeter ? (2 * shapeArea(shape)) / perimeter : 0;
 }
 
 export function ringCentroid(ring: readonly Vec2[]): Vec2 {

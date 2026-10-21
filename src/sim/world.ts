@@ -1,7 +1,7 @@
 // World state and the processes that advance it.
 
 import { Clock } from './clock';
-import { dist, smooth, type Vec2 } from './geom';
+import { dist, resample, smooth, type Vec2 } from './geom';
 import { StreetGraph, EDGE_CLASSES, type EdgeClass } from './graph';
 import { DEFAULT_INSERT, insertRoute } from './insert';
 import { Pathfinder, type CostField } from './pathfind';
@@ -11,10 +11,11 @@ import { computeMetrics, type Metrics } from './metrics';
 import { Cadastre } from './cadastre';
 import { layOutCloses, rasteriseLandUse } from './fields';
 import { pointInShape, type Shape } from './polygon';
+import { extendVillage, takeUp, vacantPlots } from './town';
 import type { Plugins, Terrain, TripDemand } from '../plugins/types';
 
 /** 'field' places are the gates of furlongs: trip ends, not drawn. */
-export type PlaceKind = 'gateway' | 'farmstead' | 'church' | 'village' | 'field';
+export type PlaceKind = 'gateway' | 'farmstead' | 'church' | 'village' | 'field' | 'market' | 'mill';
 
 export interface Place {
   id: number;
@@ -57,6 +58,9 @@ export interface World {
   township: Shape | null;
   /** Abandoned farmsteads, for the map. */
   deserted: { name: string; pos: Vec2; year: number }[];
+  /** The village's house-plot area, once there is a village, and its typical radius. */
+  villageCore: Shape | null;
+  villageRadius: number;
 }
 
 /** Sampled walker routes per year; each stands for many real trips. */
@@ -99,6 +103,8 @@ export function createWorld(seed: string, plugins: Plugins, startYear = 900): Wo
     landFactor: new Raster(h.width, h.height, h.cellSize, 1),
     township: null,
     deserted: [],
+    villageCore: null,
+    villageRadius: 0,
   };
   world.cadastre.lord = world.cadastre.addHolder('lord', 'the lord').id;
   world.cadastre.community = world.cadastre.addHolder('community', 'the township').id;
@@ -259,7 +265,9 @@ function updateHierarchy(world: World, now: number, immediate = false): void {
     } else if (e.usage < downgradeAt[e.cls] && now - e.created > patience) {
       e.pressure = Math.min(-1, e.pressure - 1);
       if (e.pressure <= -patience) {
-        if (level === 0) g.removeEdge(e.id);
+        // Planned ways are kept up: they may decline to a track but are not abandoned.
+        if (e.planned && level <= 1) e.pressure = 0;
+        else if (level === 0) g.removeEdge(e.id);
         else e.cls = EDGE_CLASSES[level - 1];
         e.pressure = 0;
       }
@@ -277,9 +285,56 @@ function nextClass(cls: EdgeClass, usage: number, upgradeAt: Record<EdgeClass, n
 
 /** Ways shorter than this are folded into a single junction. */
 const MIN_EDGE = 12;
+/** A way running this close beside a busier one for most of its length is merged into it. */
+const PARALLEL_GAP = 16;
+const PARALLEL_SHARE = 0.8;
+
+/**
+ * Two worn ways side by side a few metres apart are really one way. Fold the
+ * quieter into the busier, keeping its ends connected.
+ */
+function consolidateParallel(world: World): void {
+  const g = world.graph;
+  const edges = [...g.edges.values()].filter((e) => !e.planned).sort((a, b) => a.usage - b.usage);
+  for (const e of edges) {
+    if (!g.edges.has(e.id)) continue;
+    const len = g.length(e);
+    if (len < 40) continue;
+    const samples = resample(e.pts, 8).slice(1, -1);
+    const counts = new Map<number, number>();
+    const exclude = new Set([e.id]);
+    for (const p of samples) {
+      const hit = g.nearestEdge(p, PARALLEL_GAP, exclude);
+      if (hit) counts.set(hit.edge.id, (counts.get(hit.edge.id) ?? 0) + 1);
+    }
+    let best: number | null = null;
+    let bestCount = 0;
+    for (const [id, c] of counts) if (c > bestCount) [best, bestCount] = [id, c];
+    if (best === null || bestCount < samples.length * PARALLEL_SHARE) continue;
+    const f = g.edges.get(best)!;
+    if (EDGE_CLASSES.indexOf(f.cls) < EDGE_CLASSES.indexOf(e.cls) && f.usage < e.usage) continue;
+    f.usage += e.usage;
+    f.yearUse += e.yearUse;
+    const ends = [e.a, e.b];
+    g.removeEdge(e.id);
+    for (const nodeId of ends) {
+      const node = g.nodes.get(nodeId);
+      if (!node || (g.degree(nodeId) === 0 && node.placeId === null)) continue;
+      const j = g.junctionAt(node.pos, PARALLEL_GAP * 1.5, 10);
+      if (!j || j.id === nodeId || g.areAdjacent(j.id, nodeId)) continue;
+      if (dist(j.pos, node.pos) < 10) {
+        const keepNode = node.placeId !== null ? nodeId : j.id;
+        g.mergeNodes(keepNode, keepNode === nodeId ? j.id : nodeId);
+      } else {
+        g.addEdge(nodeId, j.id, [node.pos, j.pos], e.cls, e.usage, e.created);
+      }
+    }
+  }
+}
 
 function tidyGraph(world: World): void {
   const g = world.graph;
+  consolidateParallel(world);
   for (const e of [...g.edges.values()]) {
     if (!g.edges.has(e.id) || g.length(e) >= MIN_EDGE) continue;
     const a = g.nodes.get(e.a)!;
@@ -370,11 +425,51 @@ function settle(world: World, now: number): void {
   const village = world.places.find((p) => p.kind === 'village');
   if (village && world.rng.chance(villageRate)) {
     village.mass += 1;
-    world.cadastre.addHolder('household', `household ${Math.round(village.mass)}`, village.id);
+    const h = world.cadastre.addHolder('household', `household ${Math.round(village.mass)}`, village.id);
+    const church = world.places.find((p) => p.kind === 'church');
+    const centre = church?.pos ?? village.pos;
+    let toft = vacantPlots(world, 'toft', centre)[0];
+    if (!toft) {
+      const added = extendVillage(world, centre, world.rng.fork(`village-${Math.round(now)}`));
+      if (added) {
+        world.log.push({ year: Math.round(now), text: `${village.name} spreads along its lanes: ${added} new tofts are taken from the edge of the fields.` });
+        updateLandUse(world);
+      }
+      toft = vacantPlots(world, 'toft', centre)[0];
+    }
+    if (toft) takeUp(world, toft, h.id, 'cottage');
     if (Math.round(village.mass) % 5 === 0) {
       world.log.push({ year: Math.round(now), text: `${village.name} now has ${Math.round(village.mass)} households.` });
     }
   }
+
+  // Burgesses take up vacant plots nearest the market first: frontage there is worth most.
+  const market = world.places.find((p) => p.kind === 'market');
+  if (market) {
+    const rate = world.plugins.demand.newBurgessRate(world);
+    let n = Math.floor(rate);
+    if (world.rng.chance(rate - n)) n++;
+    for (let k = 0; k < n; k++) {
+      const plot = vacantPlots(world, 'burgage', market.pos)[0];
+      if (!plot) break;
+      const name = world.plugins.demand.burgessName(world);
+      const h = world.cadastre.addHolder('household', name, market.id);
+      // Plots fronting the market place get shops below the house.
+      const f = plot.frontage!;
+      const front = { x: (f.a.x + f.b.x) / 2, y: (f.a.y + f.b.y) / 2 };
+      const onMarket = dist(front, market.pos) < world.plugins.technology.plots.marketLength * 0.6 + 15;
+      takeUp(world, plot, h.id, onMarket ? 'shop' : 'townhouse');
+      market.mass += 0.3;
+      const burgesses = countBurgesses(world);
+      if (burgesses % 10 === 0) world.log.push({ year: Math.round(now), text: `${burgesses} burgage plots are now taken up.` });
+    }
+  }
+}
+
+function countBurgesses(world: World): number {
+  let n = 0;
+  for (const p of world.cadastre.parcels.values()) if (p.kind === 'burgage' && p.takenUp !== undefined) n++;
+  return n;
 }
 
 const FARM_NAMES = [
