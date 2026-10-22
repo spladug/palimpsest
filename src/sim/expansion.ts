@@ -207,8 +207,17 @@ function buildSpeculatively(world: World, parcels: Parcel[], use: string): void 
   for (const p of parcels) putUpFront(world, p, use);
 }
 
+interface Axis {
+  c: Vec2;
+  d: Vec2;
+  t0: number;
+  t1: number;
+  s0: number;
+  s1: number;
+}
+
 /** The long axis of a shape, and its extent along and across it. */
-function longAxis(shape: Shape): { c: Vec2; d: Vec2; t0: number; t1: number; s0: number; s1: number } {
+function longAxis(shape: Shape): Axis {
   const ring = resample([...shape[0], shape[0][0]], 4);
   const c = ringCentroid(shape[0]);
   let sxx = 0;
@@ -222,7 +231,13 @@ function longAxis(shape: Shape): { c: Vec2; d: Vec2; t0: number; t1: number; s0:
     sxy += x * y;
   }
   const theta = 0.5 * Math.atan2(2 * sxy, sxx - syy);
-  const d = { x: Math.cos(theta), y: Math.sin(theta) };
+  return axisAlong(shape, { x: Math.cos(theta), y: Math.sin(theta) });
+}
+
+/** A shape's extent along a direction and across it, about its centroid. */
+function axisAlong(shape: Shape, d: Vec2): Axis {
+  const ring = resample([...shape[0], shape[0][0]], 4);
+  const c = ringCentroid(shape[0]);
   let t0 = Infinity;
   let t1 = -Infinity;
   let s0 = Infinity;
@@ -278,9 +293,61 @@ function developField(world: World, rules: TownPlotRules): number {
   return 0;
 }
 
+/** How far an estate's streets may be turned from its field's long axis to line up with the streets around it. */
+const MAX_ALIGN_TURN = (30 * Math.PI) / 180;
+/** Estates and roads within this distance set the line a new estate follows. */
+const ALIGN_REACH = 300;
+
+/**
+ * The line the streets around a point follow, as an angle (radians) modulo a
+ * right angle: earlier estates' streets near by if there are any, else the
+ * nearest road. Builders laid new streets square or parallel to their
+ * neighbours', so a district came out as one grid rather than a patchwork.
+ */
+function prevailingLine(world: World, p: Vec2): number | null {
+  let cx = 0;
+  let cy = 0;
+  for (const e of world.graph.edges.values()) {
+    if (!e.planned || e.cls === 'path' || !e.name) continue;
+    for (let i = 1; i < e.pts.length; i++) {
+      const a = e.pts[i - 1];
+      const b = e.pts[i];
+      const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      const d = dist(m, p);
+      if (d > ALIGN_REACH) continue;
+      // Four times the angle, so square and parallel streets agree.
+      const q = 4 * Math.atan2(b.y - a.y, b.x - a.x);
+      const w = dist(a, b) * (1 - d / ALIGN_REACH);
+      cx += w * Math.cos(q);
+      cy += w * Math.sin(q);
+    }
+  }
+  if (Math.hypot(cx, cy) > 50) return Math.atan2(cy, cx) / 4;
+  const road = world.graph.nearestEdge(p, ALIGN_REACH / 2);
+  if (!road || road.edge.cls === 'path') return null;
+  const a = road.edge.pts[road.proj.segment];
+  const b = road.edge.pts[road.proj.segment + 1];
+  return Math.atan2(b.y - a.y, b.x - a.x);
+}
+
+/** The field's long axis, turned to line up with the streets around it if that is a small turn. */
+function streetAxis(world: World, field: Parcel): Axis {
+  const ax = longAxis(field.shape);
+  const line = prevailingLine(world, ax.c);
+  if (line === null) return ax;
+  const own = Math.atan2(ax.d.y, ax.d.x);
+  // The nearest of the four directions square or parallel to the prevailing line.
+  let turn = (line - own) % (Math.PI / 2);
+  if (turn > Math.PI / 4) turn -= Math.PI / 2;
+  if (turn < -Math.PI / 4) turn += Math.PI / 2;
+  if (Math.abs(turn) > MAX_ALIGN_TURN) return ax;
+  const a = own + turn;
+  return axisAlong(field.shape, { x: Math.cos(a), y: Math.sin(a) });
+}
+
 function planField(world: World, field: Parcel, rules: TownPlotRules, score: number): FieldPlan | null {
   const g = world.graph;
-  const ax = longAxis(field.shape);
+  const ax = streetAxis(world, field);
   const width = ax.s1 - ax.s0;
   const length = ax.t1 - ax.t0;
   const block = 2 * rules.depth + 2 * WAY_HALF_WIDTH.lane + 2;

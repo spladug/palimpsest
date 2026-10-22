@@ -376,10 +376,11 @@ coverage in 1900, and real period districts.
 
 | Victorian estates | Before | After | Towns |
 |---|---:|---:|---:|
-| Dead ends | 42% | 15% | 14–20% |
+| Dead ends | 42% | 17% | 14–20% |
 | Sinuosity | 1.12 | 1.02 | 1.01–1.07 |
 | Back coverage | 0% | 10% | 8–24% |
-| Grid order | 0.39 | 0.27 | 0.41–0.69 |
+| Grid order | 0.39 | 0.43 | 0.41–0.69 |
+| Junction skew (°) | 8.5 | 4.8 | 3.2–9.1 |
 
 - *Dead ends.* A new estate's streets now join the blind ends of earlier
   estates' streets where they lie roughly straight ahead, and a street still
@@ -397,10 +398,18 @@ coverage in 1900, and real period districts.
   so these loops barely show in them (borough grid order 0.89 → 0.84); they
   show on the map.
 
-**Still open:** estates' grid order fell (0.39 → 0.27, against 0.41–0.69):
-each field's streets follow its own long axis, so the estates form a
-patchwork of orientations. Aligning a new estate with its neighbours or the
-road it joins is the next thing to try. Medieval ribbon plots now match
+- *A patchwork of estates.* Each field's streets followed its own long axis.
+  Now they are turned (by up to 30°) to run square or parallel to the
+  estate streets already within 300 m, or else to the road the field fronts.
+- *Measuring like with like.* Estate plots a builder cut along an old road
+  beside the field no longer count in the estate's district, as plots on old
+  roads don't in the reference towns' Victorian streets.
+- Wherever merging and straightening ways leaves two passing through each
+  other, the yearly tidy now joins them at a junction.
+
+**Still open:** Victorian estates have more loops (meshedness 0.09 against at
+most 0.06) and more of their frontage built up (79% against 17–52%, though
+the reference mixes terraces with semis and villas). Medieval ribbon plots now match
 (8.5 m frontage). Also noticed: in one seed a grammar school stands 1,150 m
 from the market, further out than the town ever grows.
 

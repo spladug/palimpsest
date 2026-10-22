@@ -493,6 +493,9 @@ function consolidateParallel(world: World): void {
 
 function tidyGraph(world: World): void {
   const g = world.graph;
+  // Ways made or reshaped below get new ids, above any there now.
+  let before = 0;
+  for (const id of g.edges.keys()) before = Math.max(before, id);
   consolidateParallel(world);
   for (const e of [...g.edges.values()]) {
     if (!g.edges.has(e.id) || g.length(e) >= MIN_EDGE) continue;
@@ -508,6 +511,9 @@ function tidyGraph(world: World): void {
     if (n.placeId === null && g.degree(n.id) === 0) g.removeNode(n.id);
     else g.contract(n.id);
   }
+  // Merging and straightening can leave two ways passing through each other: where they cross,
+  // they meet. (There are no bridges over roads in this world.)
+  g.nodeCrossings([...g.edges.keys()].filter((id) => id > before));
 }
 
 /** Rasterise the ways and wear into the per-cell speed multiplier used for routing. */

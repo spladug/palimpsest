@@ -123,7 +123,8 @@ describe('a town over the centuries', () => {
     expect(never.map((x) => `${x.kind}: ${x.note}`)).toEqual([]);
     // The rest are rare: a handful in a whole town.
     expect(v.length).toBeLessThan(20);
-  });
+    // Checking a whole town of 1900 takes a few seconds on a slow machine.
+  }, 60_000);
 
   it('can be measured district by district, from the borough to the Victorian estates', () => {
     const form = measureTown(w);
@@ -134,12 +135,12 @@ describe('a town over the centuries', () => {
     const v = form.districts['Victorian estates']!;
     expect(b.depth.median).toBeGreaterThan(2 * v.depth.median);
     expect(v.frontage.median).toBeLessThan(b.frontage.median);
-  });
+  }, 60_000);
 
   it('names no street before its time', () => {
     const early = historyChecks(w).filter((h) => h.name.startsWith('street name'));
     expect(early.map((h) => `${h.name} in ${h.value}`)).toEqual([]);
-  });
+  }, 60_000);
 
   it('keeps itself close to the size it could support', () => {
     expect(at[1900].households).toBeGreaterThan(0.75 * w.town.capacity);

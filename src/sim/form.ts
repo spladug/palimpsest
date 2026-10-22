@@ -32,6 +32,9 @@ export function districtOf(p: Parcel): District | null {
     case 'ribbon':
       return u.year < 1540 ? 'medieval ribbons' : 'early modern ribbons';
     case 'estate':
+      // Only the plots on the estate's own streets: those a builder cut along an old road
+      // beside the field belong to that road's street, as they would on a map of real towns.
+      if (p.frontage && u.street && p.frontage.street !== u.street) return null;
       return u.year < 1837 ? 'Georgian estates' : 'Victorian estates';
     default:
       return null;
