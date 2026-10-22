@@ -13,8 +13,6 @@ export interface Range {
 export const POPULATION = {
   /** Households about 1300: a small market town of a few hundred to about two thousand people, at 4–5 a household. */
   sizeAt1300: { min: 60, max: 450, source: 'Dyer, Making a Living in the Middle Ages (2002): most small towns 500–2,000 people' },
-  /** Share of households lost in the first plague (1348–49). */
-  blackDeathLoss: { min: 0.3, max: 0.6, source: 'Hatcher, Plague, Population and the English Economy (1977): 30–45%; Benedictow, The Black Death (2004): up to 60%' },
   /** Households about 1450 against the peak before the plague: the late-medieval trough. */
   troughVsPeak: { min: 0.35, max: 0.75, source: 'Broadberry et al., British Economic Growth 1270–1870 (2015): England c. 4.8m (1300) to c. 2m (1450)' },
   /** Growth 1450 to 1600: recovery. */

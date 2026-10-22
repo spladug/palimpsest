@@ -10,7 +10,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "headless": "vite-node scripts/headless.ts",
-    "validate": "vite-node scripts/validate.ts --"
+    "validate": "vite-node scripts/validate.ts --",
+    "reference": "uv run scripts/reference/measure.py"
   },
   "devDependencies": {
     "@types/d3-delaunay": "^6.0.4",

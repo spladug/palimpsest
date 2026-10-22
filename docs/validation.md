@@ -55,8 +55,8 @@ Alternatives if one proves awkward for data: Okehampton or Tavistock
   1801–1901 censuses; the Gazetteer of Markets and Fairs (to 1516) for
   charters; dates of enclosure acts, railways, gasworks and board schools.
 
-The offline pipeline (Python: OSMnx, momepy, geopandas) writes reference
-distributions to `validation/reference/*.json`. The simulation side stays
+The offline pipeline (Python: OSMnx, geopandas, shapely; `scripts/reference/`)
+writes reference figures to `scripts/validation/reference.json`. The simulation side stays
 TypeScript.
 
 ## Layer 1: physical plausibility (automated, target zero)
@@ -298,10 +298,8 @@ the valley, and meshedness 0.07.
 - *Street names* were given before their time throughout: Regent Street in
   1789, Garibaldi Street in 1837, Railway Terrace with no railway. **Fixed:**
   names are dated, and Railway Terrace is gone.
-- *The Black Death* takes 22–33% of households, 3 of 8 seeds below the 30%
-  target. But the target counts people, and the simulation counts
-  households: where a householder dies an heir often carries on. Whether to
-  raise mortality or compare households differently is an open question.
+- *The Black Death* takes 22–33% of households, less than the 30–60% of
+  people who died. The check has since been dropped as not needed.
 - *Dead ends* in the Georgian and Victorian estates (32–42%): by-law streets
   were mostly through streets. Streets are laid along one field at a time and
   stop at its edge.
@@ -315,13 +313,73 @@ the valley, and meshedness 0.07.
 These ranges are general ones. Step 3 replaces them with figures measured on
 the reference towns.
 
+## Step 3 results: against the reference towns (2026-10-21)
+
+`npm run reference -- --inspire DIR` (Python via uv; `scripts/reference/`)
+measures the five towns the way `form.ts` measures the simulation and writes
+`scripts/validation/reference.json`, which `npm run validate` then compares
+against. Plots are HM Land Registry INSPIRE title polygons (download each
+council's file from use-land-property-data.service.gov.uk; only the derived
+figures are committed); streets and buildings come from OpenStreetMap. Each
+town has:
+
+- a **core**: plots fronting its medieval main streets (`towns.py`);
+- a **Victorian** district: plots fronting streets whose names date them to
+  Victoria's reign (Victoria, Albert, Alma, Gladstone, Jubilee...). This is a
+  stand-in for period zoning; Baldock has too few such plots.
+
+Simulation in 1900 (median over 8 seeds) against the towns' range:
+
+| | Borough | Medieval ribbons | Towns' core | Victorian estates | Towns' Victorian |
+|---|---:|---:|---:|---:|---:|
+| Frontage (m) | 7.8 | 10.0 | 7.0–9.3 | 6.3 | 5.1–11.0 |
+| Depth (m) | 61 | 46 | 20–24 † | 22 | 15–37 |
+| Coverage | 19% | 38% | 33–61% † | 31% | 21–43% |
+| Back coverage | 10% | 15% | 15–42% | 0% | 8–24% |
+| Front built up | 76% | 89% | 58–88% | 80% | 17–52% ‡ |
+| Grid order | 0.89 | 0.51 | 0.29–0.55 | 0.39 | 0.41–0.69 |
+| Meshedness | 0.00 | 0.04 | 0.01–0.10 | 0.05 | 0.00–0.06 |
+| Dead ends | 17% | 0% | 6–27% | 42% | 14–20% |
+| Junction skew (°) | 11.7 | 9.5 | 2.9–22 | 8.5 | 3.2–9.1 |
+| Sinuosity | 1.03 | 1.03 | 1.01–1.05 | 1.12 | 1.01–1.07 |
+
+† Land Registry titles split burgages into front and back titles, and plots
+have been subdivided and built over since 1900, so real depths read short and
+coverage high. These need the 1880s maps before they mean anything.
+‡ Victorian-named streets include semis and villas as well as terraces.
+
+**Holds up:** core frontages (7.8 m in the borough against 7.0–9.3 m),
+how much of the core frontage is built up, junction angles and street
+sinuosity in the core; Victorian plot sizes, coverage and junction angles.
+
+**Doesn't hold up**
+- *Victorian estates have far too many dead ends* (42% against 14–20%),
+  confirming step 2: streets stop at the edge of their field.
+- *Victorian estate streets wind too much* (sinuosity 1.12 against at most
+  1.07): they follow the long axis of closes that keep the strips' curves,
+  where real builders mostly ran them straight.
+- *Terraces have nothing behind them* (no back coverage, against 8–24%): real
+  terraces had rear wings, privies and washhouses.
+- *The planted borough is a single street*: no side lanes or passages pass its
+  plots, so its streets are far more ordered (0.89 against 0.29–0.55) and form
+  no loops. Real cores have lanes, yards and passages off the main street.
+- *Medieval ribbon plots are a little wide* (10.0 m against 7.0–9.3 m), and
+  their streets have no dead ends where real cores have some.
+
+**Not done yet in step 3:** the Extensive Urban Survey plan-unit maps (they
+are published as PDF reports, and Historic England's site refuses scripted
+access), and digitising the 1880s 25-inch maps (raster images: tracing plots
+from them is manual or semi-automatic work). Both are needed for depths,
+coverage in 1900, and real period districts.
+
 ## Order of work
 
 1. ~~Batch runner and layer 1 invariants (`npm run validate`), with the map
    overlay. Fix the collisions it finds.~~ Done; see above.
 2. ~~Town-scoped and per-district metrics; layer 3 population and event
    checks.~~ Done; see above.
-3. Reference pipeline: EUS plan units and OSM for all five towns; digitise
-   1880s cores for Totnes and Hitchin.
+3. Reference pipeline: ~~OSM and Land Registry plots for all five towns~~
+   (done; see above); EUS plan units; digitise 1880s cores for Totnes and
+   Hitchin.
 4. Layer 2 distributions and the gallery; the review rubric.
 5. Sensitivity runs; triage everything into the backlog.

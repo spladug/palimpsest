@@ -12,8 +12,9 @@ import { createWorld } from '../src/sim/world';
 import { medievalEngland } from '../src/plugins/medieval-england';
 import { checkWorld, tally, VIOLATION_KINDS, type Violation, type ViolationKind } from '../src/sim/validate';
 import { computeMetrics } from '../src/sim/metrics';
-import { DISTRICTS, measureTown, type Form, type TownForm } from '../src/sim/form';
+import { DISTRICTS, measureTown, type District, type Form, type TownForm } from '../src/sim/form';
 import { historyChecks, type HistoryCheck } from './validation/history';
+import { existsSync, readFileSync } from 'node:fs';
 
 const CHECKPOINTS = [1100, 1250, 1400, 1600, 1760, 1850, 1900];
 /** Dates at which the town's form is measured. */
@@ -125,6 +126,7 @@ function report(results: SeedResult[], to: number) {
     console.log(`  ${y}  ${line}${shares.length ? `   worst ${(Math.min(...shares) * 100).toFixed(0)}%` : ''}`);
   }
   reportForm(results);
+  reportReference(results);
   reportHistory(results);
   console.log('\nExamples at the last checkpoint:');
   for (const k of VIOLATION_KINDS) {
@@ -202,5 +204,54 @@ function reportHistory(results: SeedResult[]) {
     const n = hs.filter((h) => h).length;
     const range = `${any.range.min}–${any.range.max === Infinity ? '' : any.range.max}`;
     console.log(`${name.padEnd(34)} ${String(pass).padStart(2)}/${n}  [${range}]  ${hs.map(fmt).join(' ')}`);
+  }
+}
+
+interface Reference {
+  attribution: string;
+  towns: Record<string, { name: string; county: string; districts: Partial<Record<'core' | 'victorian', Form>> }>;
+}
+
+/** Simulated districts and the reference district each is compared with. */
+const COMPARE: [District, 'core' | 'victorian'][] = [
+  ['planted borough', 'core'],
+  ['medieval ribbons', 'core'],
+  ['Victorian estates', 'victorian'],
+];
+
+/** Layer 2 against the reference towns (scripts/reference/measure.py): the simulation's median beside the towns' range. */
+function reportReference(results: SeedResult[]) {
+  const path = new URL('./validation/reference.json', import.meta.url);
+  if (!existsSync(path)) return;
+  const ref: Reference = JSON.parse(readFileSync(path, 'utf8'));
+  const towns = Object.values(ref.towns);
+  const forms = results.map((r) => r.form[1900]).filter((f) => f);
+  const rows: [string, (f: Form) => number, (x: number) => string][] = [
+    ['frontage m', (f) => f.frontage.median, f1],
+    ['depth m', (f) => f.depth.median, f1],
+    ['width:depth', (f) => f.shape.median, f2],
+    ['coverage', (f) => f.coverage, pc],
+    ['back coverage', (f) => f.backCoverage, pc],
+    ['front continuity', (f) => f.frontContinuity, pc],
+    ['orientation order', (f) => f.streets.orientationOrder, f2],
+    ['meshedness', (f) => f.streets.meshedness, f2],
+    ['dead ends', (f) => f.streets.deadEndShare, pc],
+    ['junction skew deg', (f) => f.streets.junctionSkew, f1],
+    ['sinuosity', (f) => f.streets.sinuosity, f2],
+  ];
+  console.log(`\nAgainst the reference towns in 1900 (${towns.map((t) => t.name).join(', ')}): simulation median, then the towns' range; * outside it\n`);
+  for (const [simD, refD] of COMPARE) {
+    const sims = forms.map((f) => f.districts[simD]).filter((x): x is Form => !!x);
+    const refs = towns.map((t) => t.districts[refD]).filter((x): x is Form => !!x && !!x.streets);
+    if (!sims.length || !refs.length) continue;
+    console.log(`${simD} against ${refD} (${refs.length} towns)`);
+    for (const [label, get, fmt] of rows) {
+      const sim = med(sims.map(get));
+      const rv = refs.map(get);
+      const lo = Math.min(...rv);
+      const hi = Math.max(...rv);
+      const out = sim < lo || sim > hi ? '*' : ' ';
+      console.log(`  ${label.padEnd(20)} ${fmt(sim).padStart(7)}${out}  ${fmt(lo)}–${fmt(hi)}   ${refs.map((r) => fmt(get(r))).join(' ')}`);
+    }
   }
 }

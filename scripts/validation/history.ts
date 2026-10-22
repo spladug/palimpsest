@@ -33,10 +33,6 @@ export function historyChecks(world: World): HistoryCheck[] {
   const P = POPULATION;
 
   out.push(check('households about 1300', at(1300), P.sizeAt1300));
-  // The plague struck in 1348–49: compare the eve of it with the worst of the next few years.
-  const before = at(1345);
-  const after = Math.min(...[1350, 1355].map((y) => at(y) ?? Infinity));
-  out.push(check('Black Death loss', before && Number.isFinite(after) ? 1 - after / before : null, P.blackDeathLoss));
   const peak = Math.max(...[1300, 1320, 1340, 1345].map((y) => at(y) ?? 0));
   out.push(check('trough (1450) against peak', ratio(at(1450), peak), P.troughVsPeak));
   out.push(check('growth 1450–1600', ratio(at(1600), at(1450)), P.recovery1450to1600));

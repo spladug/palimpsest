@@ -1,0 +1,305 @@
+{
+  "attribution": "Plots: HM Land Registry INSPIRE Index Polygons, Crown copyright and database rights 2026, reproduced with the permission of HM Land Registry; polygons subject to Crown copyright and database rights 2026 Ordnance Survey AC0000851063. Streets and buildings: OpenStreetMap contributors, ODbL.",
+  "towns": {
+    "totnes": {
+      "name": "Totnes",
+      "county": "Devon",
+      "districts": {
+        "core": {
+          "plots": 218,
+          "frontage": {
+            "median": 6.974611706409586,
+            "p25": 5.709788995963066,
+            "p75": 9.294594756937453
+          },
+          "depth": {
+            "median": 23.95342748652357,
+            "p25": 14.62878768834352,
+            "p75": 33.77679087779347
+          },
+          "shape": {
+            "median": 0.30489422741451805,
+            "p25": 0.20234422524935722,
+            "p75": 0.5326012495318134
+          },
+          "coverage": 0.5248406525955236,
+          "backCoverage": 0.26036005828857317,
+          "frontContinuity": 0.8810607954423143,
+          "streets": {
+            "length": 1929.1920782593477,
+            "orientationEntropy": 3.0572428116915695,
+            "orientationOrder": 0.42166802095174627,
+            "meshedness": 0.033707865168539325,
+            "deadEndShare": 0.125,
+            "junctionSkew": 7.091127893744925,
+            "sinuosity": 1.027987467022639
+          }
+        },
+        "victorian": {
+          "plots": 111,
+          "frontage": {
+            "median": 11.011515311036579,
+            "p25": 5.544365759180181,
+            "p75": 22.434947181641135
+          },
+          "depth": {
+            "median": 35.576869281963674,
+            "p25": 17.19448858596213,
+            "p75": 53.88566163316045
+          },
+          "shape": {
+            "median": 0.40645731553084774,
+            "p25": 0.20818281250376572,
+            "p75": 0.7563383751780267
+          },
+          "coverage": 0.20783013608399645,
+          "backCoverage": 0.1559660202590998,
+          "frontContinuity": 0.19905827677489452,
+          "streets": {
+            "length": 1506.2467429308615,
+            "orientationEntropy": 3.0325033024206003,
+            "orientationOrder": 0.43866642948308965,
+            "meshedness": 0.014492753623188406,
+            "deadEndShare": 0.1724137931034483,
+            "junctionSkew": 9.135194055752606,
+            "sinuosity": 1.0252424485246134
+          }
+        }
+      }
+    },
+    "skipton": {
+      "name": "Skipton",
+      "county": "Yorkshire",
+      "districts": {
+        "core": {
+          "plots": 81,
+          "frontage": {
+            "median": 7.804966410794217,
+            "p25": 5.865450649324137,
+            "p75": 10.913992431847273
+          },
+          "depth": {
+            "median": 22.852921486258783,
+            "p25": 10.75222362157395,
+            "p75": 46.96733260151802
+          },
+          "shape": {
+            "median": 0.36158127751338986,
+            "p25": 0.226263158289454,
+            "p75": 0.6042126516381217
+          },
+          "coverage": 0.6097801485553825,
+          "backCoverage": 0.4179840444240597,
+          "frontContinuity": 0.72902156834459,
+          "streets": {
+            "length": 1159.0906774989007,
+            "orientationEntropy": 3.2324546177659794,
+            "orientationOrder": 0.2940240631789226,
+            "meshedness": 0.0970873786407767,
+            "deadEndShare": 0.05714285714285714,
+            "junctionSkew": 21.95968823459299,
+            "sinuosity": 1.025696729686828
+          }
+        },
+        "victorian": {
+          "plots": 184,
+          "frontage": {
+            "median": 5.918523732848531,
+            "p25": 4.904335504742132,
+            "p75": 11.449570052832685
+          },
+          "depth": {
+            "median": 14.898075314566322,
+            "p25": 11.76926237252641,
+            "p75": 17.551225047317896
+          },
+          "shape": {
+            "median": 0.38607154874239846,
+            "p25": 0.31500685153699826,
+            "p75": 0.8739799393178848
+          },
+          "coverage": 0.4345726509518232,
+          "backCoverage": 0.24498161978701102,
+          "frontContinuity": 0.519566536508917,
+          "streets": {
+            "length": 3093.8378310694334,
+            "orientationEntropy": 3.0739440993968117,
+            "orientationOrder": 0.41004927888818354,
+            "meshedness": 0.055865921787709494,
+            "deadEndShare": 0.1728395061728395,
+            "junctionSkew": 3.153270388338399,
+            "sinuosity": 1.0717072111945543
+          }
+        }
+      }
+    },
+    "ross": {
+      "name": "Ross-on-Wye",
+      "county": "Herefordshire",
+      "districts": {
+        "core": {
+          "plots": 151,
+          "frontage": {
+            "median": 7.213091635326489,
+            "p25": 5.317841533284614,
+            "p75": 10.80467723755919
+          },
+          "depth": {
+            "median": 20.276538189734968,
+            "p25": 12.83878306398299,
+            "p75": 30.385926672074635
+          },
+          "shape": {
+            "median": 0.3350199622927866,
+            "p25": 0.22819908576841533,
+            "p75": 0.6837173571830859
+          },
+          "coverage": 0.3785693570852696,
+          "backCoverage": 0.154998726539463,
+          "frontContinuity": 0.8007961508633041,
+          "streets": {
+            "length": 1438.4084269691655,
+            "orientationEntropy": 3.115652715748647,
+            "orientationOrder": 0.38052883431151974,
+            "meshedness": 0.014925373134328358,
+            "deadEndShare": 0.15384615384615385,
+            "junctionSkew": 5.498654370301779,
+            "sinuosity": 1.01403338162412
+          }
+        },
+        "victorian": {
+          "plots": 71,
+          "frontage": {
+            "median": 10.644844914922725,
+            "p25": 6.02416353594708,
+            "p75": 19.58075390566381
+          },
+          "depth": {
+            "median": 27.76357373931529,
+            "p25": 22.213432500347352,
+            "p75": 30.80380251323024
+          },
+          "shape": {
+            "median": 0.38980937154751405,
+            "p25": 0.17205929360197178,
+            "p75": 0.8684319732561947
+          },
+          "coverage": 0.2149894351362863,
+          "backCoverage": 0.11753866832798147,
+          "frontContinuity": 0.16762713832856965,
+          "streets": {
+            "length": 1107.4242256544007,
+            "orientationEntropy": 2.9818402911138397,
+            "orientationOrder": 0.47268548683982636,
+            "meshedness": 0.044444444444444446,
+            "deadEndShare": 0.2,
+            "junctionSkew": 5.684029986511632,
+            "sinuosity": 1.0134345929567046
+          }
+        }
+      }
+    },
+    "hitchin": {
+      "name": "Hitchin",
+      "county": "Hertfordshire",
+      "districts": {
+        "core": {
+          "plots": 258,
+          "frontage": {
+            "median": 9.335600886870193,
+            "p25": 5.687406986754336,
+            "p75": 13.394490268757067
+          },
+          "depth": {
+            "median": 21.899504043077908,
+            "p25": 14.881874550835548,
+            "p75": 34.2161212675682
+          },
+          "shape": {
+            "median": 0.42981613747030584,
+            "p25": 0.25574703037644797,
+            "p75": 0.630367729078226
+          },
+          "coverage": 0.3258389604233395,
+          "backCoverage": 0.17525868521016522,
+          "frontContinuity": 0.5849802611412417,
+          "streets": {
+            "length": 3546.1508695699595,
+            "orientationEntropy": 3.1642141502029486,
+            "orientationOrder": 0.3452501143285722,
+            "meshedness": 0.02880658436213992,
+            "deadEndShare": 0.2653061224489796,
+            "junctionSkew": 5.908375970105482,
+            "sinuosity": 1.04785653564856
+          }
+        },
+        "victorian": {
+          "plots": 138,
+          "frontage": {
+            "median": 5.128787732337222,
+            "p25": 4.095286958400662,
+            "p75": 7.522238473702599
+          },
+          "depth": {
+            "median": 36.64269975189228,
+            "p25": 36.46328446963763,
+            "p75": 36.91563416472898
+          },
+          "shape": {
+            "median": 0.13156880071296534,
+            "p25": 0.1085202675014706,
+            "p75": 0.21654863460355095
+          },
+          "coverage": 0.23864434857854627,
+          "backCoverage": 0.08435443256545347,
+          "frontContinuity": 0.5086288698565282,
+          "streets": {
+            "length": 960.5230186506682,
+            "orientationEntropy": 2.609148539932201,
+            "orientationOrder": 0.6902577509093744,
+            "meshedness": 0.0,
+            "deadEndShare": 0.14285714285714285,
+            "junctionSkew": 8.208879076398034,
+            "sinuosity": 1.017195345127014
+          }
+        }
+      }
+    },
+    "baldock": {
+      "name": "Baldock",
+      "county": "Hertfordshire",
+      "districts": {
+        "core": {
+          "plots": 228,
+          "frontage": {
+            "median": 9.22283399432958,
+            "p25": 5.915316489916069,
+            "p75": 13.388766799437002
+          },
+          "depth": {
+            "median": 24.286869113281803,
+            "p25": 16.04771492535743,
+            "p75": 36.89019751053331
+          },
+          "shape": {
+            "median": 0.37921547663018623,
+            "p25": 0.22879900579069917,
+            "p75": 0.6354106685099452
+          },
+          "coverage": 0.38191697158942356,
+          "backCoverage": 0.21238394144587072,
+          "frontContinuity": 0.6433473202373327,
+          "streets": {
+            "length": 4173.682743185372,
+            "orientationEntropy": 2.8544350876916504,
+            "orientationOrder": 0.553535969000814,
+            "meshedness": 0.018808777429467086,
+            "deadEndShare": 0.2413793103448276,
+            "junctionSkew": 2.9221056668642973,
+            "sinuosity": 1.0283705015322768
+          }
+        }
+      }
+    }
+  }
+}
