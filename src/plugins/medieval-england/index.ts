@@ -413,9 +413,28 @@ const BUILDER_GIVEN = ['John', 'William', 'Thomas', 'James', 'George', 'Joseph',
 const LATER_GIVEN = ['John', 'William', 'Thomas', 'James', 'George', 'Joseph', 'Samuel', 'Charles', 'Mary', 'Elizabeth', 'Ann', 'Sarah', 'Hannah', 'Martha', 'Jane', 'Susannah'];
 
 const MEDIEVAL_STREETS = ['Sheep Street', 'Swine Street', 'Rother Street', 'Hog Lane', 'Horsefair', 'Cornhill', 'Wood Street', 'Bell Lane', 'Back Street', 'New Street', 'Chapel Street', 'Bull Ring'];
-const GEORGIAN_STREETS = ['George Street', 'Union Street', 'Nelson Street', 'Wellington Street', 'Paradise Row', 'Albion Street', 'Waterloo Road', 'Trafalgar Street', 'Regent Street', 'Brunswick Terrace', 'Queen Street', 'King Street', 'Hanover Street', 'Duke Street'];
-const VICTORIAN_STREETS = ['Victoria Street', 'Albert Road', 'Alma Road', 'Inkerman Street', 'Garibaldi Street', 'Gladstone Street', 'Palmerston Road', 'Clarence Street', 'Princes Street', 'Cobden Street', 'Peel Street', 'Railway Terrace', 'Jubilee Street', 'Osborne Road', 'Balmoral Avenue', 'Sandringham Road', 'Hope Street', 'Providence Row'];
-const LATER_STREETS = ['Edward Street', 'Coronation Avenue', 'Ladysmith Road', 'Kitchener Road', 'Beech Avenue', 'Oak Avenue', 'The Crescent', 'Elm Grove', 'Laburnum Grove', 'Meadow Way', 'Orchard Close', 'Highfield Road', 'Park Avenue', 'Fairfield Road'];
+/**
+ * Builders' street names, each with the first year it could be given: names
+ * after battles, royalty and statesmen wait for the event or the person's fame.
+ */
+type DatedName = [name: string, from: number];
+const GEORGIAN_STREETS: DatedName[] = [
+  ['George Street', 0], ['Union Street', 1801], ['Nelson Street', 1798], ['Wellington Street', 1809], ['Paradise Row', 0],
+  ['Albion Street', 0], ['Waterloo Road', 1815], ['Trafalgar Street', 1805], ['Regent Street', 1811], ['Brunswick Terrace', 0],
+  ['Queen Street', 0], ['King Street', 0], ['Hanover Street', 0], ['Duke Street', 0],
+];
+const VICTORIAN_STREETS: DatedName[] = [
+  ['Victoria Street', 1837], ['Albert Road', 1840], ['Alma Road', 1854], ['Inkerman Street', 1854], ['Garibaldi Street', 1860],
+  ['Gladstone Street', 1853], ['Palmerston Road', 1855], ['Clarence Street', 0], ['Princes Street', 0], ['Cobden Street', 1846],
+  ['Peel Street', 1830], ['Jubilee Street', 1887], ['Osborne Road', 1845], ['Balmoral Avenue', 1852], ['Sandringham Road', 1862],
+  ['Hope Street', 0], ['Providence Row', 0],
+];
+const LATER_STREETS: DatedName[] = [
+  ['Edward Street', 1901], ['Coronation Avenue', 1902], ['Ladysmith Road', 1900], ['Kitchener Road', 1898], ['Beech Avenue', 0],
+  ['Oak Avenue', 0], ['The Crescent', 0], ['Elm Grove', 0], ['Laburnum Grove', 0], ['Meadow Way', 0], ['Orchard Close', 0],
+  ['Highfield Road', 0], ['Park Avenue', 0], ['Fairfield Road', 0],
+];
+const namesBy = (list: DatedName[], year: number) => list.filter(([, from]) => from <= year).map(([n]) => n);
 
 /**
  * Households the town can support, by year. Rapid growth after the charter to
@@ -539,7 +558,7 @@ const demand: DemandPlugin = {
     };
     if (wholeField) {
       const y = world.clock.now;
-      return fresh(y < 1837 ? GEORGIAN_STREETS : y < 1901 ? VICTORIAN_STREETS : LATER_STREETS);
+      return fresh(namesBy(y < 1837 ? GEORGIAN_STREETS : y < 1901 ? VICTORIAN_STREETS : LATER_STREETS, y));
     }
     if (toward) {
       const road = /^(North|South|East|West) road$/.exec(toward);

@@ -1,6 +1,8 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createWorld, type World } from '../src/sim/world';
 import { checkWorld } from '../src/sim/validate';
+import { measureTown } from '../src/sim/form';
+import { historyChecks } from '../scripts/validation/history';
 import { medievalEngland } from '../src/plugins/medieval-england';
 import { townHouseholds } from '../src/sim/dynamics';
 import { nextBackBuilding, splitLengthwise } from '../src/sim/plots';
@@ -121,6 +123,22 @@ describe('a town over the centuries', () => {
     expect(never.map((x) => `${x.kind}: ${x.note}`)).toEqual([]);
     // The rest are rare: a handful in a whole town.
     expect(v.length).toBeLessThan(20);
+  });
+
+  it('can be measured district by district, from the borough to the Victorian estates', () => {
+    const form = measureTown(w);
+    expect(form.districts['planted borough']?.plots).toBeGreaterThan(10);
+    expect(form.districts['Victorian estates']?.plots).toBeGreaterThan(10);
+    // Burgages are long and narrow; terraced plots are narrower and much shallower.
+    const b = form.districts['planted borough']!;
+    const v = form.districts['Victorian estates']!;
+    expect(b.depth.median).toBeGreaterThan(2 * v.depth.median);
+    expect(v.frontage.median).toBeLessThan(b.frontage.median);
+  });
+
+  it('names no street before its time', () => {
+    const early = historyChecks(w).filter((h) => h.name.startsWith('street name'));
+    expect(early.map((h) => `${h.name} in ${h.value}`)).toEqual([]);
   });
 
   it('keeps itself close to the size it could support', () => {

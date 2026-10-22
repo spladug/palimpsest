@@ -114,6 +114,7 @@ export function layOutTofts(world: World, core: Shape, church: Vec2, households:
   const width = perchWidths(world, rules.toftWidths);
   const cut = plotsAlongWays(world, core, land, rules.toftDepth, width, 'the village street');
   const parcels = cut.map((p) => addPlot(world, 'toft', p));
+  for (const p of parcels) p.unit = { kind: 'village', year: Math.round(world.clock.now) };
   parcels.sort((a, b) => dist(mid(a), church) - dist(mid(b), church));
   let housed = 0;
   for (const h of households) {
@@ -176,6 +177,7 @@ export function takeLand(world: World, shapes: Shape[], from: Set<ParcelKind>): 
       const p = cad.addParcel(parcel.kind, part, parcel.regime, { ...parcel.rights }, year, parcel.furlongId);
       p.use = parcel.use;
       p.takenUp = parcel.takenUp;
+      p.unit = parcel.unit;
       rest.push(p.id);
     }
   }
@@ -232,7 +234,8 @@ export function extendVillage(world: World, centre: Vec2, rng: Rng): number {
   }
   world.villageCore = union(core, outline)[0] ?? core;
   if (!cut.length) return 0;
-  plotsFromStrips(world, cut, 'toft', 'Strips at the edge of the fields taken for new tofts');
+  const tofts = plotsFromStrips(world, cut, 'toft', 'Strips at the edge of the fields taken for new tofts');
+  for (const p of tofts) p.unit = { kind: 'village', year: Math.round(world.clock.now) };
   return cut.length;
 }
 
@@ -426,6 +429,7 @@ export function plantBorough(world: World, core: Shape): Borough | null {
     if (e.cls === 'path' || e.cls === 'track') e.cls = 'lane';
   }
   const parcels = plotsFromStrips(world, plots, 'burgage', 'Open-field strips taken for burgage plots');
+  for (const p of parcels) p.unit = { kind: 'borough', year, street: streetName };
   const plotShapes = plots.map((p) => p.shape);
 
   const marketLine = trimTo(street, rules.marketLength);

@@ -89,6 +89,7 @@ function extendAlongWays(world: World, rules: TownPlotRules): number {
   }
   const year = Math.round(world.clock.now);
   const parcels = plotsFromLand(world, best.plots, rules.kind, `Land along ${best.name} taken for building plots`, RIBBON_FROM);
+  for (const p of parcels) p.unit = { kind: 'ribbon', year, street: best.name };
   if (rules.building === 'speculative') buildSpeculatively(world, parcels, rules.use);
   world.log.push({ year, text: `The town spreads along ${best.name}: ${parcels.length} new plots.` });
   return parcels.length;
@@ -388,6 +389,7 @@ function layOutField(world: World, plan: FieldPlan, rules: TownPlotRules): numbe
   const seller = sellerName(world, plan.field.rights.alienation);
   const builder = world.cadastre.addHolder('company', world.plugins.demand.builderName?.(world) ?? 'a builder');
   const parcels = plotsFromLand(world, plots, rules.kind, `${seller} sells the field to ${builder.name}, who lays out ${name}`, new Set([plan.field.kind]));
+  for (const p of parcels) p.unit = { kind: 'estate', year, street: name };
   const { regime, rights } = world.plugins.tenure.rights(rules.kind, builder.id, world.cadastre);
   for (const p of parcels) {
     p.rights = { ...rights };

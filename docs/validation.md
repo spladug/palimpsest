@@ -252,11 +252,75 @@ buildings in the river and fewer than 20 violations in a whole town.
 irregular leftovers behind the market; Victorian streets ending blind at the
 edge of their field; estates scattered across the countryside.
 
+## Step 2 results: the town's form and its history (2026-10-21)
+
+Each plot now records its **plan unit**: how and when it was laid out (with
+the village, as the planted borough, as a ribbon along a way out of town, as
+a builder's estate on a field, or as an institution's grounds). The unit is
+kept through splits and merges. `src/sim/form.ts` groups plots into period
+districts and measures plots, buildings and streets for each and for the
+whole town; a street belongs to the town where most of it runs past plot
+fronts. The sidebar's network panel now shows the town's figures beside the
+valley's. `npm run validate` reports form at 1300, 1600 and 1900, and the
+history checks (`scripts/validation/`, targets with sources in `targets.ts`).
+
+Form in 1900, median over 8 seeds:
+
+| | Village | Borough | Medieval ribbons | Early modern ribbons | Georgian estates | Victorian estates |
+|---|---:|---:|---:|---:|---:|---:|
+| Frontage (perches) | 4.2 | 1.6 | 2.0 | 2.0 | 1.2 | 1.3 |
+| Depth (m) | 69 | 61 | 46 | 36 | 22 | 22 |
+| Front built up | 44% | 76% | 89% | 89% | 90% | 80% |
+| Back land built on | 0% | 10% | 15% | 13% | 1% | 0% |
+| Grid order | 0.42 | 0.89 | 0.51 | 0.60 | 0.47 | 0.39 |
+| Dead ends | 16% | 17% | 0% | 5% | 32% | 42% |
+
+For the town as a whole, grid order is 0.19 against 0.18 for every way in
+the valley, and meshedness 0.07.
+
+**Holds up**
+- Population: every seed is within range for size about 1300 (125–195
+  households), the late-medieval trough (about half the peak), recovery to
+  1600, growth to 1750, and 19th-century growth (about ×3).
+- Events: the charter, friary, Dissolution, grammar school, enclosure Act,
+  chapels, workhouse, cemetery and board school all fall in their documented
+  ranges in every seed.
+- Burgages are planted at a median of 2.5–2.9 perches, within the 2–4 perch
+  range reported by Slater and Tait, and are halved to about 1.5 perches by
+  1320, in line with how commonly half-burgages appear. Depths of about 60 m
+  are typical.
+- Estates are laid out next to earlier building: the median gap is 24 m,
+  plot centre to plot centre, and none of 165 estates stood more than 150 m
+  out. The impression of estates scattered across the fields comes from
+  ribbons running far out along the roads, not from the estates.
+
+**Doesn't hold up**
+- *Street names* were given before their time throughout: Regent Street in
+  1789, Garibaldi Street in 1837, Railway Terrace with no railway. **Fixed:**
+  names are dated, and Railway Terrace is gone.
+- *The Black Death* takes 22–33% of households, 3 of 8 seeds below the 30%
+  target. But the target counts people, and the simulation counts
+  households: where a householder dies an heir often carries on. Whether to
+  raise mortality or compare households differently is an open question.
+- *Dead ends* in the Georgian and Victorian estates (32–42%): by-law streets
+  were mostly through streets. Streets are laid along one field at a time and
+  stop at its edge.
+- *Meshedness* is low throughout (0.07 for the town). Needs reference values
+  before judging.
+- *The gasworks* came in 1890 in one seed, late; there was no site for it
+  earlier.
+- *Built coverage* (23% of plot area for the town) looks low for 1900; to be
+  checked against the 1880s maps.
+
+These ranges are general ones. Step 3 replaces them with figures measured on
+the reference towns.
+
 ## Order of work
 
 1. ~~Batch runner and layer 1 invariants (`npm run validate`), with the map
    overlay. Fix the collisions it finds.~~ Done; see above.
-2. Town-scoped and per-district metrics; layer 3 population and event checks.
+2. ~~Town-scoped and per-district metrics; layer 3 population and event
+   checks.~~ Done; see above.
 3. Reference pipeline: EUS plan units and OSM for all five towns; digitise
    1880s cores for Totnes and Hitchin.
 4. Layer 2 distributions and the gallery; the review rubric.

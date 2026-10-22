@@ -256,6 +256,7 @@ function commitSite(world: World, id: string, use: UseType, site: Site, street: 
   const { regime, rights } = world.plugins.tenure.rights(kind, holder.id, cad);
   const parcel = cad.addParcel(kind, site.shape, regime, rights, year);
   parcel.use = id;
+  parcel.unit = { kind: 'grounds', year, street: street ?? undefined };
   parcel.frontage = site.frontage;
   parcel.takenUp = year;
   cad.retire(taken.consumed, year, `Land taken for ${article(use.name)}`, [parcel.id, ...taken.rest]);

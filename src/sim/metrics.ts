@@ -2,7 +2,7 @@
 // Orientation entropy after Boeing (2019); meshedness after Buhl et al. (2006).
 
 import { dist, polylineLength, undirectedBearing } from './geom';
-import { EDGE_CLASSES, type EdgeClass, type StreetGraph } from './graph';
+import { EDGE_CLASSES, type EdgeClass, type GraphEdge, type StreetGraph } from './graph';
 import type { World } from './world';
 
 export interface Metrics {
@@ -28,8 +28,13 @@ export interface Metrics {
 const BINS = 36;
 
 export function orientationEntropy(graph: StreetGraph): number {
+  return orientationEntropyOf(graph.edges.values());
+}
+
+/** Orientation entropy of any set of ways. */
+export function orientationEntropyOf(edges: Iterable<GraphEdge>): number {
   const bins = new Float64Array(BINS);
-  for (const e of graph.edges.values()) {
+  for (const e of edges) {
     for (let i = 1; i < e.pts.length; i++) {
       const len = dist(e.pts[i - 1], e.pts[i]);
       const b = undirectedBearing(e.pts[i - 1], e.pts[i]);
@@ -43,6 +48,13 @@ export function orientationEntropy(graph: StreetGraph): number {
   let h = 0;
   for (const v of bins) if (v > 0) h -= (v / total) * Math.log(v / total);
   return h;
+}
+
+/** Boeing's orientation order from an entropy: 0 for no order, 1 for a single grid. */
+export function orientationOrder(h: number): number {
+  const hMax = Math.log(BINS);
+  const hGrid = Math.log(4);
+  return 1 - Math.pow(Math.max(0, h - hGrid) / (hMax - hGrid), 2);
 }
 
 export function computeMetrics(world: World): Metrics {
@@ -69,9 +81,7 @@ export function computeMetrics(world: World): Metrics {
   const meshedness = n >= 3 ? Math.max(0, (m - n + 1) / (2 * n - 5)) : 0;
 
   const h = orientationEntropy(g);
-  const hMax = Math.log(BINS);
-  const hGrid = Math.log(4);
-  const order = 1 - Math.pow(Math.max(0, h - hGrid) / (hMax - hGrid), 2);
+  const order = orientationOrder(h);
 
   return {
     nodes: g.nodes.size,

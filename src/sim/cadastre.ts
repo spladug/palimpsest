@@ -31,6 +31,20 @@ export const SOLID_KINDS: ReadonlySet<ParcelKind> = new Set(['toft', 'burgage', 
 /** The grounds of an institution or a works, which ways lead into from a gate. */
 export const GROUNDS_KINDS: ReadonlySet<ParcelKind> = new Set(['precinct', 'works']);
 
+/**
+ * How a plot came to be laid out (a plan unit, after Conzen): with the village,
+ * as part of the planted borough, along a way out of town, or as a builder's
+ * estate on a whole field; or as the grounds of an institution or a works.
+ */
+export type PlanUnitKind = 'village' | 'borough' | 'ribbon' | 'estate' | 'grounds';
+
+export interface PlanUnit {
+  kind: PlanUnitKind;
+  year: number;
+  /** The street the unit was laid out along. */
+  street?: string;
+}
+
 /** How a parcel is held overall; the detail is in its rights. */
 export type Regime = 'private' | 'use-right' | 'common';
 
@@ -74,6 +88,8 @@ export interface Parcel {
   value?: number;
   /** The land use a precinct or works ground was taken for. */
   use?: string;
+  /** How and when the plot was laid out; kept through splits and merges. */
+  unit?: PlanUnit;
   shape: Shape;
   bounds: Bounds;
   area: number;
@@ -256,6 +272,7 @@ export class Cadastre {
       p.takenUp = first.takenUp;
       p.phase = first.phase;
       p.value = first.value;
+      p.unit = first.unit;
       return p;
     });
     for (const id of oldIds) {

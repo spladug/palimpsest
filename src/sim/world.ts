@@ -8,6 +8,7 @@ import { Pathfinder, type CostField } from './pathfind';
 import { Raster } from './raster';
 import { Rng } from './rng';
 import { computeMetrics, type Metrics } from './metrics';
+import { measureTown, type Form } from './form';
 import { Cadastre, GROUNDS_KINDS, SOLID_KINDS, TOWN_PLOT_KINDS } from './cadastre';
 import { layOutCloses, rasteriseLandUse } from './fields';
 import { bounds, distanceToBoundary, pointInShape, type Bounds, type Shape } from './polygon';
@@ -47,7 +48,8 @@ export interface World {
   graph: StreetGraph;
   places: Place[];
   log: LogEntry[];
-  metrics: { year: number; metrics: Metrics }[];
+  /** Street measures over time: the whole valley's, and the town's own once it has plots. */
+  metrics: { year: number; metrics: Metrics; town?: Form }[];
   pathfinder: Pathfinder;
   /** Routes walked in the latest year, for display. */
   recentRoutes: Vec2[][];
@@ -148,7 +150,14 @@ export function createWorld(seed: string, plugins: Plugins, startYear = 900): Wo
     startYear + 1,
   );
   world.clock.addProcess(
-    { name: 'metrics', interval: 5, run: (w, now) => w.metrics.push({ year: now, metrics: computeMetrics(w) }) },
+    {
+      name: 'metrics',
+      interval: 5,
+      run: (w, now) => {
+        const town = w.places.some((p) => p.kind === 'market') ? measureTown(w).town : undefined;
+        w.metrics.push({ year: now, metrics: computeMetrics(w), town });
+      },
+    },
     startYear + 5,
   );
   for (const ev of plugins.demand.events(world)) world.clock.schedule(ev);

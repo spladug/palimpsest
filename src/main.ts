@@ -141,11 +141,22 @@ function renderMetrics(): void {
     ['Junctions', String(latest.junctions)],
     ['Farmsteads', String(world.places.filter((p) => p.kind === 'farmstead').length)],
   ]);
+  const town = world.metrics[world.metrics.length - 1]?.town;
   fill('shape', [
-    ['Orientation entropy', latest.orientationEntropy.toFixed(2)],
-    ['Grid order', latest.orientationOrder.toFixed(2)],
-    ['Meshedness', latest.meshedness.toFixed(2)],
-    ['Dead ends', pct(latest.deadEndShare)],
+    ...(town
+      ? ([
+          ['Town grid order', town.streets.orientationOrder.toFixed(2)],
+          ['Town meshedness', town.streets.meshedness.toFixed(2)],
+          ['Town dead ends', pct(town.streets.deadEndShare)],
+          ['Plot frontage', `${town.frontage.median.toFixed(1)} m`],
+          ['Frontage built up', pct(town.frontContinuity)],
+          ['Plot area built on', pct(town.coverage)],
+        ] as [string, string][])
+      : []),
+    ['Valley orientation entropy', latest.orientationEntropy.toFixed(2)],
+    ['Valley grid order', latest.orientationOrder.toFixed(2)],
+    ['Valley meshedness', latest.meshedness.toFixed(2)],
+    ['Valley dead ends', pct(latest.deadEndShare)],
     ['T-junctions', pct(latest.threeWayShare)],
     ['Crossroads', pct(latest.fourWayShare)],
     ['Circuity', latest.circuity.toFixed(2)],
