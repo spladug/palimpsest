@@ -297,13 +297,23 @@ function planField(world: World, field: Parcel, rules: TownPlotRules, score: num
     ];
     const run = clipPolyline(line, field.shape, 2).sort((a, b) => polylineLength(b) - polylineLength(a))[0];
     if (!run || polylineLength(run) < 50) continue;
-    // Join each end to the nearest way within reach, if the link is clear of buildings.
-    const joinTo = (p: Vec2) => {
+    // Join each end to the blind end of an earlier street if one is near (the next field's
+    // streets carry the last ones on), else to the nearest way within reach, if the link is clear.
+    // Only where the join lies roughly straight ahead: builders ran their streets straight.
+    const joinTo = (p: Vec2, ahead: Vec2): { proj: { point: Vec2 } } | null => {
+      const straight = (q: Vec2) => {
+        const d = dist(p, q);
+        return d < 3 || ((q.x - p.x) * ahead.x + (q.y - p.y) * ahead.y) / d > Math.cos((35 * Math.PI) / 180);
+      };
+      const end = deadEndNear(world, p, 60);
+      if (end && straight(end) && !crossesBuilding(world, [end, p]) && !crossesSolid(world, [end, p], WAY_WIDTH.lane / 2, false)) {
+        return { proj: { point: end } };
+      }
       const hit = g.nearestEdge(p, 45);
-      return hit && !crossesBuilding(world, [hit.proj.point, p]) ? hit : null;
+      return hit && straight(hit.proj.point) && !crossesBuilding(world, [hit.proj.point, p]) ? hit : null;
     };
-    const first = joinTo(run[0]);
-    const last = joinTo(run[run.length - 1]);
+    const first = joinTo(run[0], { x: -ax.d.x, y: -ax.d.y });
+    const last = joinTo(run[run.length - 1], ax.d);
     if (first || last) {
       const pts = [...(first ? [first.proj.point] : []), ...run, ...(last ? [last.proj.point] : [])];
       streets.push({ pts, joinStart: !!first, joinEnd: !!last });
@@ -321,6 +331,69 @@ function planField(world: World, field: Parcel, rules: TownPlotRules, score: num
   if (!streets.length) return null;
   return { field, streets, score };
 }
+
+/** The nearest node where a street ends blind, within reach of a point. */
+function deadEndNear(world: World, p: Vec2, reach: number): Vec2 | null {
+  const g = world.graph;
+  let best: Vec2 | null = null;
+  let bestD = reach;
+  for (const n of g.nodes.values()) {
+    if (g.degree(n.id) !== 1 || n.placeId !== null) continue;
+    const e = g.edges.get([...g.edgesAt(n.id)][0])!;
+    if (!e.planned) continue;
+    const d = dist(n.pos, p);
+    if (d < bestD) [best, bestD] = [n.pos, d];
+  }
+  return best;
+}
+
+/**
+ * Carry a street that ends blind on to the nearest way ahead, as a lane across
+ * the fields, if one is within reach and the lane would cross no one's plot.
+ */
+function throughLane(world: World, end: number, year: number, streets: Set<number>): void {
+  const g = world.graph;
+  const node = g.nodes.get(end)!;
+  const e = g.edges.get([...g.edgesAt(end)][0])!;
+  const pts = e.a === end ? e.pts : e.pts.slice().reverse();
+  const from = pts[0];
+  const prev = pts.find((q) => dist(q, from) > 5) ?? pts[pts.length - 1];
+  const len = dist(from, prev) || 1;
+  const dir = { x: (from.x - prev.x) / len, y: (from.y - prev.y) / len };
+  // Straight on if a way lies ahead; failing that, a lane turning square to either side, as
+  // builders laid them: a slanting link would spoil the estate's grid.
+  let best: { point: Vec2; reach: number } | null = null;
+  for (const turn of [0, -90, 90]) {
+    const a = (turn * Math.PI) / 180;
+    const d = { x: dir.x * Math.cos(a) - dir.y * Math.sin(a), y: dir.x * Math.sin(a) + dir.y * Math.cos(a) };
+    for (let reach = 20; reach <= THROUGH_LANE_REACH; reach += 10) {
+      const tip = { x: from.x + d.x * reach, y: from.y + d.y * reach };
+      const hit = g.nearestEdge(tip, 8, new Set([e.id]));
+      if (!hit) continue;
+      const line = [from, hit.proj.point];
+      // A straight run is worth a longer lane than a turn.
+      const cost = dist(from, hit.proj.point) * (turn ? 1.5 : 1);
+      if (!crossesBuilding(world, line) && !crossesSolid(world, line, WAY_WIDTH.lane / 2, false) && (!best || cost < best.reach)) {
+        best = { point: hit.proj.point, reach: cost };
+      }
+      break;
+    }
+  }
+  if (!best) return;
+  const j = g.junctionAt(best.point, 8, 6);
+  if (!j || j.id === end) return;
+  const lane = g.addEdge(end, j.id, [node.pos, j.pos], 'lane', world.plugins.technology.hierarchy.downgradeAt.lane * 2, year);
+  lane.planned = true;
+  lane.floor = 'lane';
+  // Its own way, not a bend in the street it leads from (it takes a name when plots are cut along it).
+  // The lane may cross the estate's own streets: keep track of all their pieces.
+  const pieces = g.nodeCrossings([lane.id, ...streets]);
+  streets.clear();
+  for (const id of pieces) streets.add(id);
+}
+
+/** How far a blind street is carried on across the fields to meet another way. */
+const THROUGH_LANE_REACH = 150;
 
 function layOutField(world: World, plan: FieldPlan, rules: TownPlotRules): number {
   const g = world.graph;
@@ -356,6 +429,15 @@ function layOutField(world: World, plan: FieldPlan, rules: TownPlotRules): numbe
   if ([...newEdges].some((id) => crossesSolid(world, g.edges.get(id)!.pts, WAY_WIDTH.lane / 2, false))) {
     for (const id of newEdges) g.removeEdge(id);
     return 0;
+  }
+  // Streets left ending blind are carried on to the next way, where the way across the fields is clear.
+  for (const id of [...newEdges]) {
+    const e = g.edges.get(id);
+    if (!e) continue;
+    for (const end of [e.a, e.b]) {
+      if (!g.nodes.has(end) || g.degree(end) !== 1 || g.nodes.get(end)!.placeId !== null) continue;
+      if (g.nodes.has(end) && g.degree(end) === 1) throughLane(world, end, year, newEdges);
+    }
   }
 
   // Plots along the new streets first, then along any old way on the field's edge.

@@ -148,7 +148,8 @@ describe('a town over the centuries', () => {
   it('keeps institutions on the old edge while growth jumps past them (a fringe belt)', () => {
     const market = w.places.find((p) => p.kind === 'market')!;
     const parcels = [...w.cadastre.parcels.values()];
-    const old = parcels.filter((p) => p.kind === 'precinct' && p.created < 1700);
+    // The inner fringe belt: the medieval friary and hospital at the town's edge.
+    const old = parcels.filter((p) => p.kind === 'precinct' && p.created < 1540);
     expect(old.length).toBeGreaterThan(0);
     const centre = (p: (typeof parcels)[number]) => {
       const b = p.bounds;

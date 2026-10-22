@@ -196,6 +196,11 @@ export interface UseType {
   holderName?: string;
   /** Extra buildings on a 'land' site, beside the main one (relative positions in metres). */
   extra?: { use: string; at: [number, number]; size: [number, number] }[];
+  /**
+   * Outbuildings put up with a house: a wing straight behind it, or a small
+   * building at the far end of the yard. Each runs along one side of the plot.
+   */
+  outbuildings?: { use: string; width: number; depth: number; place: 'wing' | 'yard' }[];
 }
 
 export interface TechnologyPlugin {

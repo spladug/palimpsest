@@ -16,8 +16,8 @@ import {
   union,
   type Shape,
 } from './polygon';
-import { clipPolyline, cutFrontage, frontBuilding, overlapsAny, perchWidths, type CutPlot } from './plots';
-import type { Parcel, ParcelKind } from './cadastre';
+import { clipPolyline, cutFrontage, frameRect, frontBuilding, overlapsAny, perchWidths, plotFrame, splitLengthwise, type CutPlot } from './plots';
+import type { Frontage, Parcel, ParcelKind } from './cadastre';
 import { WAY_WIDTH, type EdgeClass, type GraphEdge } from './graph';
 import { insertRoute, DEFAULT_INSERT } from './insert';
 import { crossesBuilding, crossesSolid, type Place, type World } from './world';
@@ -262,7 +262,34 @@ export function putUpFront(world: World, plot: Parcel, use: string): boolean {
   }
   const year = Math.round(world.clock.now);
   world.cadastre.addBuilding({ parcelId: plot.id, use, footprint: b.footprint, ridge: b.ridge, storeys: type.storeys, built: year });
+  for (const o of type.outbuildings ?? []) putUpOutbuilding(world, plot, b.footprint, o, year);
   return true;
+}
+
+/** An outbuilding along one side of a plot: a wing behind the house, or at the far end of the yard. */
+function putUpOutbuilding(
+  world: World,
+  plot: Parcel,
+  house: Shape,
+  o: { use: string; width: number; depth: number; place: 'wing' | 'yard' },
+  year: number,
+): void {
+  const fr = plotFrame(plot.shape, plot.frontage!);
+  const w = Math.min(o.width, fr.width * 0.6);
+  if (w < 1.2) return;
+  // Every other plot builds on its other side, so wings pair up across the party wall as they did.
+  const u0 = plot.id % 2 ? 0.2 : fr.width - 0.2 - w;
+  const back = Math.max(...house[0].map((p) => (p.x - fr.origin.x) * fr.n.x + (p.y - fr.origin.y) * fr.n.y));
+  const n0 = o.place === 'wing' ? back : fr.depth - 0.5 - o.depth;
+  if (n0 < back || n0 + o.depth > fr.depth - 0.3) return;
+  const rect = frameRect(fr, u0, u0 + w, n0, n0 + o.depth);
+  if (intersection(rect, plot.shape).reduce((a, x) => a + shapeArea(x), 0) < w * o.depth * 0.995) return;
+  const standing = world.cadastre.buildingsOn(plot.id).filter((x) => x.footprint !== house);
+  if (standing.some((x) => intersection(rect, x.footprint).some((y) => shapeArea(y) > 0.2))) return;
+  const at = (du: number, dn: number) => ({ x: fr.origin.x + fr.u.x * du + fr.n.x * dn, y: fr.origin.y + fr.u.y * du + fr.n.y * dn });
+  const ridge: [Vec2, Vec2] = [at(u0 + w / 2, n0), at(u0 + w / 2, n0 + o.depth)];
+  const storeys = world.plugins.technology.uses[o.use]?.storeys ?? 1;
+  world.cadastre.addBuilding({ parcelId: plot.id, use: o.use, footprint: rect, ridge, storeys, built: year, back: true });
 }
 
 /** Vacant plots of a kind, nearest a point first. */
@@ -428,9 +455,12 @@ export function plantBorough(world: World, core: Shape): Borough | null {
     e.name = 'Market Street';
     if (e.cls === 'path' || e.cls === 'track') e.cls = 'lane';
   }
+  const passages = setAsidePassages(plots, street);
   const parcels = plotsFromStrips(world, plots, 'burgage', 'Open-field strips taken for burgage plots');
   for (const p of parcels) p.unit = { kind: 'borough', year, street: streetName };
-  const plotShapes = plots.map((p) => p.shape);
+  const underPassages = takeLand(world, passages.map((p) => p.shape), new Set(['strip']));
+  cad.retire(underPassages.consumed, year, 'Open-field strips taken for passages between the plots', underPassages.rest);
+  const plotShapes = [...plots.map((p) => p.shape), ...passages.map((p) => p.shape)];
 
   const marketLine = trimTo(street, rules.marketLength);
   const half = rules.marketWidth / 2;
@@ -444,8 +474,70 @@ export function plantBorough(world: World, core: Shape): Borough | null {
   cad.retire(underMarket.consumed, year, 'Open-field strips taken for the market place', [marketParcel.id, ...underMarket.rest]);
 
   if (addBackLanes(world, plots, street)) world.log.push({ year, text: 'Back lanes are laid out behind both rows of plots.' });
+  layOutPassages(world, passages, year);
   const marketCentre = resample(marketLine, 2)[Math.floor(resample(marketLine, 2).length / 2)];
   return { street, market, marketCentre, plots: parcels.length, streetName };
+}
+
+/** Every so many plots along a row, a passage is left between two of them. */
+const PASSAGE_EVERY = 6;
+/** Width of a passage between plots (an entry, wynd or vennel). */
+const PASSAGE_WIDTH = 3;
+
+interface Passage {
+  shape: Shape;
+  frontage: Frontage;
+  depth: number;
+}
+
+/** The plots on each side of a street, in order along it. */
+function rowsOf(plots: CutPlot[], street: Vec2[]): CutPlot[][] {
+  const t = direction(street);
+  return [1, -1].map((side) => {
+    const n = { x: -t.y * side, y: t.x * side };
+    return plots.filter((p) => p.frontage.inward.x * n.x + p.frontage.inward.y * n.y > 0).sort((a, b) => a.along - b.along);
+  });
+}
+
+/**
+ * Narrow passages from the street to the back of the plots: every few plots,
+ * one gives up a strip along its side. Changes `plots` in place.
+ */
+function setAsidePassages(plots: CutPlot[], street: Vec2[]): Passage[] {
+  const out: Passage[] = [];
+  for (const row of rowsOf(plots, street)) {
+    for (let i = PASSAGE_EVERY - 1; i < row.length - 2; i += PASSAGE_EVERY) {
+      const p = row[i];
+      const width = dist(p.frontage.a, p.frontage.b);
+      if (width < PASSAGE_WIDTH + 5) continue;
+      const parts = splitLengthwise(p.shape, p.frontage, PASSAGE_WIDTH / width);
+      if (!parts) continue;
+      const [passage, rest] = parts;
+      out.push({ shape: passage.shape, frontage: passage.frontage, depth: plotFrame(p.shape, p.frontage).depth });
+      Object.assign(p, { shape: rest.shape, frontage: rest.frontage });
+    }
+  }
+  return out;
+}
+
+/** A path down each passage, from the street to the back lane (or to the back of the plots, if there is none). */
+function layOutPassages(world: World, passages: Passage[], year: number): void {
+  const g = world.graph;
+  for (const p of passages) {
+    const f = p.frontage;
+    const l = Math.hypot(f.inward.x, f.inward.y) || 1;
+    const n = { x: f.inward.x / l, y: f.inward.y / l };
+    const front = { x: (f.a.x + f.b.x) / 2, y: (f.a.y + f.b.y) / 2 };
+    const onStreet = g.nearestEdge(front, 25);
+    if (!onStreet) continue;
+    const backPoint = { x: front.x + n.x * (p.depth + BACK_LANE_GAP), y: front.y + n.y * (p.depth + BACK_LANE_GAP) };
+    const a = g.junctionAt(onStreet.proj.point, 25, 4);
+    const b = g.nearestEdge(backPoint, 8) ? g.junctionAt(backPoint, 8, 4) : g.addNode({ x: front.x + n.x * p.depth, y: front.y + n.y * p.depth });
+    if (!a || !b || a.id === b.id) continue;
+    const e = g.addEdge(a.id, b.id, [a.pos, front, b.pos], 'path', 0, year);
+    e.planned = true;
+    e.floor = 'path';
+  }
 }
 
 /** From the back of the plots to a back lane's centreline: half a lane, and room for the line to be simplified. */

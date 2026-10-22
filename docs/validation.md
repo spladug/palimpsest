@@ -372,6 +372,38 @@ access), and digitising the 1880s 25-inch maps (raster images: tracing plots
 from them is manual or semi-automatic work). Both are needed for depths,
 coverage in 1900, and real period districts.
 
+## Fixes from step 3 (2026-10-21)
+
+| Victorian estates | Before | After | Towns |
+|---|---:|---:|---:|
+| Dead ends | 42% | 15% | 14–20% |
+| Sinuosity | 1.12 | 1.02 | 1.01–1.07 |
+| Back coverage | 0% | 10% | 8–24% |
+| Grid order | 0.39 | 0.27 | 0.41–0.69 |
+
+- *Dead ends.* A new estate's streets now join the blind ends of earlier
+  estates' streets where they lie roughly straight ahead, and a street still
+  ending blind is carried on as a lane to the next way: straight on, or
+  turning square to either side, within 150 m and clear of anyone's plot.
+  The lane is its own way rather than a bend in the street.
+- *Winding streets.* Streets only join a way or a blind end that lies within
+  35° of straight ahead; otherwise they are carried on straight.
+- *Nothing behind terraces.* Houses can now have outbuildings: a terrace a
+  two-storey back wing (paired across the party wall with the neighbour's) and
+  a privy at the end of the yard, a villa a coach house.
+- *The borough as a single street.* Every sixth plot along each row gives up
+  a 3 m strip along one side for a passage (an entry or vennel) from the street
+  to the back lane. The street measures count only ways passing plot fronts,
+  so these loops barely show in them (borough grid order 0.89 → 0.84); they
+  show on the map.
+
+**Still open:** estates' grid order fell (0.39 → 0.27, against 0.41–0.69):
+each field's streets follow its own long axis, so the estates form a
+patchwork of orientations. Aligning a new estate with its neighbours or the
+road it joins is the next thing to try. Medieval ribbon plots now match
+(8.5 m frontage). Also noticed: in one seed a grammar school stands 1,150 m
+from the market, further out than the town ever grows.
+
 ## Order of work
 
 1. ~~Batch runner and layer 1 invariants (`npm run validate`), with the map

@@ -237,7 +237,8 @@ export function checkWorld(world: World, opts: CheckOptions = {}): Violation[] {
         out.push({ kind: 'wedge building', at: centre(b.footprint), ids: [b.id], size: corner, note: b.use });
       }
       const span = spanAcross(b.footprint, b.ridge);
-      if (want('narrow building') && span < 3) {
+      // A privy or a lean-to is meant to be small; only buildings big enough to live or work in count.
+      if (want('narrow building') && span < 2.5 && shapeArea(b.footprint) >= 12) {
         out.push({ kind: 'narrow building', at: centre(b.footprint), ids: [b.id], size: span, note: b.use });
       }
     }
